@@ -1,0 +1,7 @@
+# Archivos ignorados
+node_modules/
+.env
+*.log
+.DS_Store
+Thumbs.db
+__pycache__/

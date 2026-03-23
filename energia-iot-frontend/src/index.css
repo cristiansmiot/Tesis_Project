@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos personalizados */
+body {
+  @apply bg-gray-100 text-gray-800;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Animación para el indicador de conexión */
+@keyframes pulse-green {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-green {
+  animation: pulse-green 2s ease-in-out infinite;
+}
+
+/* Tarjetas con hover suave */
+.card-hover {
+  @apply transition-all duration-300 ease-in-out;
+}
+
+.card-hover:hover {
+  @apply transform -translate-y-1 shadow-lg;
+}
+
+/* Gradiente para el header */
+.header-gradient {
+  background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+}
+
+/* Estilo para valores grandes */
+.valor-grande {
+  @apply text-4xl font-bold tracking-tight;
+}
+
+/* Indicador de estado */
+.estado-conectado {
+  @apply w-3 h-3 bg-green-500 rounded-full animate-pulse-green;
+}
+
+.estado-desconectado {
+  @apply w-3 h-3 bg-red-500 rounded-full;
+}

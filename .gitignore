@@ -1,7 +1,36 @@
 # Archivos ignorados
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.db
+*.sqlite3
+
+# Node / Frontend
 node_modules/
+dist/
+build/
+
+# PlatformIO / Firmware
+.pio/
+*.bin
+*.elf
+
+# Entorno y secretos
 .env
-*.log
+.env.local
+.env.production
+
+# Sistema operativo
 .DS_Store
 Thumbs.db
-__pycache__/
+*.log
+
+# Claude Code (privado)
+.claude/
+
+# Prompts privados
+Promt_Incial_*.txt

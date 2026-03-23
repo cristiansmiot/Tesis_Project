@@ -1,0 +1,44 @@
+# =============================================================================
+# acl — Control de Acceso por Topic (Mosquitto ACL)
+# Proyecto: Tesis Maestría IoT - Universidad Javeriana
+# =============================================================================
+#
+# Sintaxis:
+#   user <usuario>          → aplica las reglas siguientes a ese usuario
+#   topic read  <topic>     → solo suscripcion
+#   topic write <topic>     → solo publicacion
+#   topic readwrite <topic> → publicacion y suscripcion
+#   topic <topic>           → readwrite (por defecto si no se especifica)
+#   Wildcards: + (un nivel), # (todos los niveles)
+#
+# Orden de evaluacion: las reglas se evaluan en orden. La primera que coincida
+# determina el acceso. Si ninguna coincide, el acceso se deniega.
+# =============================================================================
+
+# ── medidor_iot ───────────────────────────────────────────────────────────────
+# Usuario compartido por el firmware ESP32 (publisher) y el backend FastAPI
+# (subscriber). En un entorno de produccion se usarian usuarios separados.
+#
+# Firmware publica en:
+#   medidor/ESP32-001/datos     → QoS 0, retain=0
+#   medidor/ESP32-001/estado    → QoS 1, retain=1
+#   medidor/ESP32-001/alerta    → QoS 1, retain=0
+#   medidor/ESP32-001/conexion  → QoS 1, retain=1 (online / LWT offline)
+#
+# Backend se suscribe a: medidor/#
+#
+user medidor_iot
+topic readwrite medidor/#
+
+# ── Notas para expansion futura ───────────────────────────────────────────────
+# Cuando se agreguen mas dispositivos, crear un usuario por dispositivo
+# y restringir sus topics de escritura al device_id correspondiente:
+#
+# user medidor_ESP32_002
+# topic write  medidor/ESP32-002/#
+# topic read   medidor/ESP32-002/#
+#
+# Para un usuario de solo lectura (dashboard externo, auditoría):
+#
+# user dashboard_reader
+# topic read medidor/#

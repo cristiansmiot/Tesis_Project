@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     MQTT_PASSWORD: str = ""
     MQTT_TOPIC_BASE: str = "medidor/#"
     MQTT_CLIENT_ID: str = ""
-    MQTT_USE_TLS: bool = True  # Railway proxy requiere TLS
+    MQTT_USE_TLS: bool = False  # Railway TCP proxy es passthrough plano, sin TLS
     
     # API
     API_HOST: str = "0.0.0.0"

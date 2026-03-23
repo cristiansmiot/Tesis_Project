@@ -411,8 +411,16 @@ class MQTTClient:
                 ).first()
 
                 if not dispositivo:
-                    logger.warning(f"⚠️ /estado: dispositivo '{device_id}' no encontrado en BD")
-                    return
+                    # Auto-registrar: puede llegar /estado antes de /datos en reconexiones
+                    dispositivo = Dispositivo(
+                        device_id=device_id,
+                        nombre=f"Auto-registrado: {device_id}",
+                        activo=True,
+                    )
+                    db.add(dispositivo)
+                    db.commit()
+                    db.refresh(dispositivo)
+                    logger.info(f"🆕 Dispositivo auto-registrado via /estado: {device_id}")
 
                 # Estado de conexion: campo SenML "online" o true por defecto
                 online = data.get("online", True)
@@ -509,6 +517,20 @@ class MQTTClient:
                     Dispositivo.device_id == device_id
                 ).first()
 
+                if not dispositivo and online:
+                    # Auto-registrar si llega "online" y el dispositivo no existe aún.
+                    # Esto ocurre cuando el backend arranca con el ESP32 ya conectado
+                    # y recibe el mensaje retain de /conexion antes del siguiente /datos.
+                    dispositivo = Dispositivo(
+                        device_id=device_id,
+                        nombre=f"Auto-registrado: {device_id}",
+                        activo=True,
+                    )
+                    db.add(dispositivo)
+                    db.commit()
+                    db.refresh(dispositivo)
+                    logger.info(f"🆕 Dispositivo auto-registrado via /conexion: {device_id}")
+
                 if dispositivo:
                     dispositivo.conectado = online
                     if online:
@@ -518,7 +540,7 @@ class MQTTClient:
                     logger.info(f"📡 /conexion {device_id}: {estado_str}")
                 else:
                     logger.warning(
-                        f"⚠️ /conexion: dispositivo '{device_id}' no encontrado en BD"
+                        f"⚠️ /conexion: dispositivo '{device_id}' no encontrado en BD (offline ignorado)"
                     )
 
             finally:

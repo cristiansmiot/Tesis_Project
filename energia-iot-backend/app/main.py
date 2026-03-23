@@ -26,8 +26,8 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
     except Exception as e:
-        logger.error(f"❌ Error inicializando BD: {e}")
-        raise
+        logger.error(f"❌ Error inicializando BD: {e} (la API arrancará sin BD)")
+        # No raise: permitir que la app suba y responda /health aunque BD falle al inicio
 
     # === Iniciar cliente MQTT ===
     mqtt_broker = settings.MQTT_BROKER

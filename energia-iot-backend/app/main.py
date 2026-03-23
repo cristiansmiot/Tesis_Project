@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.config import settings
-from app.database import init_db, SessionLocal
+from app.database import init_db, get_session_local
 from app.routers import dispositivos_router, mediciones_router, salud_router
 from app.services.mqtt_client import create_mqtt_client, get_mqtt_client
 
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
             client_id=mqtt_client_id,
             use_tls=mqtt_use_tls,
         )
-        client.set_db_session_factory(SessionLocal)
+        client.set_db_session_factory(get_session_local())
         client.start()
         logger.info(f"📡 Cliente MQTT conectando a {mqtt_broker}:{mqtt_port} (TLS={'sí' if mqtt_use_tls else 'no'})")
     except Exception as e:

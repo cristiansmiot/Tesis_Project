@@ -14,11 +14,15 @@ def get_database_url() -> str:
     """
     Determina qué base de datos usar basándose en la configuración.
     """
-    # Si USE_SQLITE es False y tenemos URL de PostgreSQL, usar PostgreSQL
-    if not settings.USE_SQLITE and "postgresql" in settings.DATABASE_URL:
+    url = settings.DATABASE_URL
+    # Normalizar: Railway a veces emite 'postgres://' que SQLAlchemy 2.x no acepta
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    if not settings.USE_SQLITE and ("postgresql" in url):
         print("✅ Conectando a PostgreSQL (Railway)")
-        return settings.DATABASE_URL
-    
+        return url
+
     # Caso contrario, usar SQLite
     print("⚠️  Usando SQLite para desarrollo local")
     return "sqlite:///./energia_iot.db"

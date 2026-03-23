@@ -55,6 +55,16 @@ export const dispositivosAPI = {
     });
     return handleResponse(response);
   },
+
+  // Enviar comando remoto al dispositivo (calibrate, probe, reset)
+  enviarComando: async (deviceId, comando) => {
+    const response = await fetch(`${API_BASE_URL}/dispositivos/${deviceId}/comando`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comando }),
+    });
+    return handleResponse(response);
+  },
 };
 
 /**

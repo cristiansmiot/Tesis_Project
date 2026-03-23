@@ -293,6 +293,12 @@ class MQTTClient:
                             continue
                 return default
 
+            # Validar rangos antes de guardar
+            valid, err_msg = self._validate_measurement(data)
+            if not valid:
+                logger.warning(f"⚠️ Medición descartada de {device_id}: {err_msg}")
+                return
+
             # Soporte dual: SenML RFC 8428 (primer alias) + JSON plano legacy
             # SenML /datos: vrms, irms, p_act, p_react, p_ap, pf, freq, e_act, temp, pq
             # JSON legacy:  vrms/voltage, irms_a/current, p_w/power, q_var, s_va, f_hz, e_wh
@@ -539,6 +545,58 @@ class MQTTClient:
             f"valor={data.get('value', 'N/A')} | "
             f"msg={data.get('message', '')}"
         )
+
+    # ==========================================================================
+    # PUBLICACION DE COMANDOS
+    # ==========================================================================
+
+    def publish(self, topic: str, payload: str, qos: int = 1, retain: bool = False):
+        """
+        Publica un mensaje en un topic MQTT.
+        Usado para enviar comandos al dispositivo desde el dashboard.
+
+        Args:
+            topic: Topic destino (ej: medidor/ESP32-001/cmd)
+            payload: Mensaje a publicar (texto plano)
+            qos: Nivel QoS (0 o 1)
+            retain: Flag retain
+        """
+        if not self.is_connected:
+            raise RuntimeError("Cliente MQTT no conectado al broker")
+
+        result = self.client.publish(topic, payload, qos=qos, retain=retain)
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError(f"Error publicando en {topic}: rc={result.rc}")
+
+        logger.info(f"📤 Comando publicado: [{topic}] {payload}")
+
+    # ==========================================================================
+    # VALIDACION DE DATOS
+    # ==========================================================================
+
+    @staticmethod
+    def _validate_measurement(data: dict) -> tuple[bool, str]:
+        """
+        Valida rangos de datos de medicion antes de guardar en BD.
+        Retorna (valido, mensaje_error).
+        """
+        checks = [
+            ("vrms",   0.0,   500.0,  ("vrms", "voltage")),
+            ("irms",   0.0,   200.0,  ("irms", "irms_a", "current")),
+            ("freq",   45.0,  65.0,   ("freq", "f_hz", "frequency")),
+            ("pf",     -1.0,  1.0,    ("pf",)),
+        ]
+        for name, lo, hi, keys in checks:
+            for key in keys:
+                if key in data and data[key] is not None:
+                    try:
+                        val = float(data[key])
+                    except (TypeError, ValueError):
+                        return False, f"{key}: valor no numerico"
+                    if val < lo or val > hi:
+                        return False, f"{key}={val} fuera de rango [{lo}, {hi}]"
+                    break  # solo validar el primer alias encontrado
+        return True, ""
 
     # ==========================================================================
     # CONTROL DEL CLIENTE

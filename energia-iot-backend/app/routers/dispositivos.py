@@ -1,13 +1,18 @@
 """ROUTER: Dispositivos - CRUD de medidores de energía"""
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.database import get_db
 from app.models.dispositivo import Dispositivo
 from app.models.nodo_salud import NodoSalud
 from app.schemas.dispositivo import DispositivoCreate, DispositivoUpdate, DispositivoResponse, DispositivoEstado
+from app.services.mqtt_client import get_mqtt_client
+
+# Timeout para considerar dispositivo desconectado (segundos).
+# Si no se recibe mensaje en este periodo, se marca offline automaticamente.
+DEVICE_OFFLINE_TIMEOUT_S = 180  # 3 minutos (3x intervalo de publicacion de 60s)
 
 router = APIRouter(prefix="/dispositivos", tags=["Dispositivos"])
 
@@ -71,18 +76,35 @@ def obtener_estado(device_id: str, db: Session = Depends(get_db)):
     dispositivo = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
     if not dispositivo:
         raise HTTPException(status_code=404, detail=f"Dispositivo '{device_id}' no encontrado")
+
+    # Deteccion de desconexion por timeout: si no hay mensaje reciente,
+    # marcar offline independientemente del flag LWT.
+    conectado = dispositivo.conectado
     tiempo_sin_conexion = None
     if dispositivo.ultima_conexion:
-        delta = datetime.utcnow() - dispositivo.ultima_conexion.replace(tzinfo=None)
+        now_utc = datetime.now(timezone.utc)
+        ult = dispositivo.ultima_conexion
+        if ult.tzinfo is None:
+            ult = ult.replace(tzinfo=timezone.utc)
+        delta = now_utc - ult
         segundos = int(delta.total_seconds())
+
+        # Timeout-based offline: si supera el umbral, forzar desconectado
+        if segundos > DEVICE_OFFLINE_TIMEOUT_S:
+            conectado = False
+
         if segundos < 60:
             tiempo_sin_conexion = f"{segundos} segundos"
         elif segundos < 3600:
             tiempo_sin_conexion = f"{segundos // 60} minutos"
         else:
             tiempo_sin_conexion = f"{segundos // 3600} horas"
+    else:
+        # Sin ultima_conexion registrada → nunca se conecto
+        conectado = False
+
     return DispositivoEstado(device_id=dispositivo.device_id, nombre=dispositivo.nombre or "Sin nombre",
-                             conectado=dispositivo.conectado, ultima_conexion=dispositivo.ultima_conexion,
+                             conectado=conectado, ultima_conexion=dispositivo.ultima_conexion,
                              tiempo_sin_conexion=tiempo_sin_conexion)
 
 
@@ -118,4 +140,62 @@ def obtener_salud(device_id: str, db: Session = Depends(get_db)):
         "msg_tx":       registro.msg_tx,
         "reconexiones": registro.reconexiones,
         "fw_version":   registro.fw_version,
+    }
+
+
+# Comandos remotos validos que el ESP32 acepta
+VALID_COMMANDS = {"calibrate", "probe", "reset"}
+
+
+@router.post("/{device_id}/comando")
+def enviar_comando(
+    device_id: str,
+    comando: str = Body(..., embed=True),
+    db: Session = Depends(get_db),
+):
+    """
+    Envia un comando remoto al dispositivo via MQTT.
+
+    Comandos soportados:
+      - calibrate: inicia calibracion mSure del ADE9153A
+      - probe: verifica comunicacion SPI con el ADE9153A
+      - reset: reinicia el ESP32
+
+    El comando se publica en el topic medidor/{device_id}/cmd
+    y el firmware lo recibe via AT+SMSUB URC.
+    """
+    device_id = device_id.strip().upper()
+
+    # Validar que el dispositivo existe
+    dispositivo = db.query(Dispositivo).filter(
+        Dispositivo.device_id == device_id
+    ).first()
+    if not dispositivo:
+        raise HTTPException(status_code=404, detail=f"Dispositivo '{device_id}' no encontrado")
+
+    # Validar comando
+    comando = comando.strip().lower()
+    if comando not in VALID_COMMANDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Comando '{comando}' no valido. Comandos soportados: {', '.join(sorted(VALID_COMMANDS))}",
+        )
+
+    # Publicar via MQTT
+    client = get_mqtt_client()
+    if not client or not client.is_connected:
+        raise HTTPException(status_code=503, detail="Cliente MQTT no conectado al broker")
+
+    topic = f"medidor/{device_id}/cmd"
+    try:
+        client.publish(topic, comando, qos=1)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    return {
+        "status": "ok",
+        "device_id": device_id,
+        "comando": comando,
+        "topic": topic,
+        "mensaje": f"Comando '{comando}' enviado a {device_id}",
     }

@@ -53,6 +53,22 @@ Prefijo base: `/api/v1`
 | `DELETE` | `/dispositivos/{device_id}` | Eliminar dispositivo |
 | `GET` | `/dispositivos/{device_id}/estado` | Estado de conexión actual |
 | `GET` | `/dispositivos/{device_id}/salud` | Último registro de salud del nodo |
+| `POST` | `/dispositivos/{device_id}/comando` | Enviar comando remoto al dispositivo |
+
+**Comandos remotos soportados** (via MQTT topic `medidor/{device_id}/cmd`):
+
+| Comando | Descripcion |
+|---------|-------------|
+| `calibrate` | Inicia calibracion mSure del ADE9153A |
+| `probe` | Verifica comunicacion SPI con el ADE9153A |
+| `reset` | Reinicia el ESP32 remotamente |
+
+Ejemplo:
+```bash
+curl -X POST https://TU-URL-BACKEND.up.railway.app/api/v1/dispositivos/ESP32-001/comando \
+  -H "Content-Type: application/json" \
+  -d '{"comando": "calibrate"}'
+```
 
 El `device_id` del ESP32 es: **`MEDIDOR_CRISTIAN_001`**
 
@@ -208,3 +224,62 @@ energia-iot-backend/
 ├── requirements.txt
 └── Procfile
 ```
+
+---
+
+## Seguridad (Fase 5)
+
+### Implementado
+
+1. **LWT (Last Will and Testament)**
+   - El firmware configura LWT via `AT+SMCONF` al iniciar sesion MQTT.
+   - Si el ESP32 pierde conectividad sin desconectarse (`AT+SMDISC`), el broker
+     publica automaticamente `"offline"` en `medidor/ESP32-001/conexion` (retain=1, QoS=1).
+   - El backend procesa este mensaje y actualiza `Dispositivo.conectado = false`.
+   - Verificable en Railway logs: buscar `📡 /conexion ESP32-001: 🔴 OFFLINE`.
+
+2. **Deteccion de desconexion por timeout**
+   - El endpoint `GET /dispositivos/{id}/estado` compara `ultima_conexion` contra
+     un umbral de 180 segundos (3x el intervalo de publicacion de 60s).
+   - Si no se recibe mensaje en ese periodo, el dispositivo se reporta como
+     desconectado independientemente del flag LWT.
+   - Esto cubre el caso donde el LWT no se entrega (ej. broker reiniciado).
+
+3. **Validacion de datos MQTT en backend**
+   - Antes de guardar en PostgreSQL, el servicio MQTT valida rangos:
+     - Voltaje: 0-500 V
+     - Corriente: 0-200 A
+     - Frecuencia: 45-65 Hz
+     - Factor de potencia: -1.0 a 1.0
+   - Mediciones fuera de rango se descartan con log de advertencia.
+   - Los schemas Pydantic en la API REST tambien validan rangos equivalentes.
+
+4. **Validacion de comandos remotos**
+   - El endpoint `POST /dispositivos/{id}/comando` solo acepta comandos de una
+     lista blanca: `calibrate`, `probe`, `reset`.
+   - Se verifica que el dispositivo exista en la BD antes de publicar.
+
+5. **Autenticacion MQTT**
+   - El broker Mosquitto requiere usuario/contrasena (`medidor_iot` / password).
+   - Tanto el firmware como el backend se autentican al conectarse.
+
+### Trabajo futuro (documentado para tesis)
+
+1. **TLS/SSL para MQTT**
+   - El SIM7080G soporta `AT+CSSLCFG` para configurar TLS.
+   - Railway proxy soporta TLS (el backend ya lo usa con `MQTT_USE_TLS=true`).
+   - Falta configurar certificados en el firmware (`AT+CSSLCFG="sslversion"`, `AT+CSSLCFG="cacert"`).
+   - Recomendacion: usar TLS 1.2 con certificado CA de Let's Encrypt.
+
+2. **Autenticacion del dashboard**
+   - Actualmente la API es publica (sin tokens).
+   - Implementar JWT o API keys para proteger endpoints de comandos.
+   - El endpoint `/comando` es especialmente critico (permite `reset`).
+
+3. **Rate limiting**
+   - Limitar frecuencia de comandos remotos para evitar abuso.
+   - Limitar requests por IP en la API REST.
+
+4. **Cifrado de credenciales en firmware**
+   - Las credenciales MQTT estan en `meter_config.h` como `#define`.
+   - Mover a NVS cifrado o provisioning seguro via BLE.

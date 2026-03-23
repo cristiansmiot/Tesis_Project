@@ -3,6 +3,7 @@ import { RefreshCw, AlertCircle, CheckCircle } from 'lucide-react';
 import IndicadorEnergia from './IndicadorEnergia';
 import GraficoConsumo from './GraficoConsumo';
 import EstadoDispositivo from './EstadoDispositivo';
+import PanelComandos from './PanelComandos';
 import MetricasTransmision from './MetricasTransmision';
 import TablaHistorial from './TablaHistorial';
 import { dispositivosAPI, medicionesAPI, saludAPI, healthCheck } from '../services/api';
@@ -230,12 +231,16 @@ const Dashboard = () => {
             <GraficoConsumo datos={historial} />
           </div>
 
-          {/* Estado del dispositivo */}
-          <div>
+          {/* Estado del dispositivo + Comandos remotos */}
+          <div className="space-y-6">
             <EstadoDispositivo
               dispositivo={dispositivo}
               estado={estadoDispositivo}
               salud={saludDispositivo}
+            />
+            <PanelComandos
+              deviceId={DEVICE_ID}
+              conectado={estadoDispositivo?.conectado || false}
             />
           </div>
         </div>

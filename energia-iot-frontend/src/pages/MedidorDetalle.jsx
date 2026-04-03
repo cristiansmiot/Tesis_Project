@@ -13,18 +13,21 @@ import MetricasTransmision from '../components/MetricasTransmision';
 import TablaHistorial from '../components/TablaHistorial';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import { dispositivosAPI, medicionesAPI, saludAPI, comandosAPI, eventosAPI } from '../services/api';
-
-const tabs = [
-  { id: 'resumen', label: 'Resumen' },
-  { id: 'variables', label: 'Variables' },
-  { id: 'historico', label: 'Historico' },
-  { id: 'comandos', label: 'Comandos' },
-  { id: 'eventos', label: 'Eventos' },
-];
+import { useAuth } from '../contexts/AuthContext';
 
 const MedidorDetalle = () => {
   const { deviceId } = useParams();
   const { refreshKey } = useOutletContext();
+  const { puedeEnviarComandos } = useAuth();
+
+  // Tabs filtrados por rol
+  const tabs = [
+    { id: 'resumen', label: 'Resumen' },
+    { id: 'variables', label: 'Variables' },
+    { id: 'historico', label: 'Historico' },
+    ...(puedeEnviarComandos ? [{ id: 'comandos', label: 'Comandos' }] : []),
+    { id: 'eventos', label: 'Eventos' },
+  ];
   const [activeTab, setActiveTab] = useState('resumen');
   const [dispositivo, setDispositivo] = useState(null);
   const [medicion, setMedicion] = useState(null);

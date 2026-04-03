@@ -7,22 +7,53 @@ from datetime import datetime, timedelta
 from app.database import get_db
 from app.models.dispositivo import Dispositivo
 from app.models.nodo_salud import NodoSalud
+from app.models.usuario import Usuario
 from app.schemas.dispositivo import DispositivoCreate, DispositivoUpdate, DispositivoResponse, DispositivoEstado
+from app.services.auth import get_current_user, get_optional_user, obtener_dispositivos_asignados
 
 router = APIRouter(prefix="/dispositivos", tags=["Dispositivos"])
 
 
+def _verificar_acceso_dispositivo(device_id: str, usuario: Optional[Usuario], db: Session):
+    """Verifica que el usuario tenga acceso al dispositivo (visualizador solo ve asignados)."""
+    if usuario and usuario.es_visualizador:
+        dispositivos_permitidos = obtener_dispositivos_asignados(usuario, db)
+        if dispositivos_permitidos is not None and device_id not in dispositivos_permitidos:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"No tienes acceso al dispositivo '{device_id}'",
+            )
+
+
 @router.get("/", response_model=List[DispositivoResponse])
-def listar_dispositivos(skip: int = 0, limit: int = 100, activo: Optional[bool] = None, db: Session = Depends(get_db)):
+def listar_dispositivos(
+    skip: int = 0,
+    limit: int = 100,
+    activo: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    usuario: Optional[Usuario] = Depends(get_optional_user),
+):
     query = db.query(Dispositivo)
     if activo is not None:
         query = query.filter(Dispositivo.activo == activo)
+
+    # Visualizador solo ve sus dispositivos asignados
+    if usuario and usuario.es_visualizador:
+        dispositivos_permitidos = obtener_dispositivos_asignados(usuario, db)
+        if dispositivos_permitidos is not None:
+            query = query.filter(Dispositivo.device_id.in_(dispositivos_permitidos))
+
     return query.offset(skip).limit(limit).all()
 
 
 @router.get("/{device_id}", response_model=DispositivoResponse)
-def obtener_dispositivo(device_id: str, db: Session = Depends(get_db)):
+def obtener_dispositivo(
+    device_id: str,
+    db: Session = Depends(get_db),
+    usuario: Optional[Usuario] = Depends(get_optional_user),
+):
     device_id = device_id.strip().upper()
+    _verificar_acceso_dispositivo(device_id, usuario, db)
     dispositivo = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
     if not dispositivo:
         raise HTTPException(status_code=404, detail=f"Dispositivo '{device_id}' no encontrado")
@@ -90,8 +121,6 @@ def obtener_estado(device_id: str, db: Session = Depends(get_db)):
 def obtener_salud(device_id: str, db: Session = Depends(get_db)):
     """
     Retorna el último registro de salud del nodo (topic /estado).
-    Incluye indicadores binarios (ac_ok, ade_ok, cal_ok, modem_ok) y
-    métricas de transmisión (rssi_dbm, msg_tx, reconexiones).
     """
     device_id = device_id.strip().upper()
     registro = (

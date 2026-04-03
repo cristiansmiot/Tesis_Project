@@ -9,7 +9,7 @@ from datetime import datetime
 from app.database import get_db
 from app.models.evento import Evento
 from app.models.usuario import Usuario
-from app.services.auth import get_current_user, get_optional_user
+from app.services.auth import get_current_user, get_optional_user, require_operador_or_admin
 from app.services.audit import registrar_accion
 
 router = APIRouter(prefix="/eventos", tags=["Eventos y Alarmas"])
@@ -93,9 +93,9 @@ def reconocer_evento(
     evento_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(get_current_user),
+    usuario: Usuario = Depends(require_operador_or_admin),
 ):
-    """Reconocer (resolver) una alerta."""
+    """Reconocer (resolver) una alerta. Solo operador y super_admin."""
     evento = db.query(Evento).filter(Evento.id == evento_id).first()
     if not evento:
         raise HTTPException(status_code=404, detail="Evento no encontrado")

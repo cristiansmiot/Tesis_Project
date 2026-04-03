@@ -1,10 +1,17 @@
 """
-SERVICIO: Autenticación JWT
-Maneja hash de contraseñas, generación y validación de tokens JWT.
+SERVICIO: Autenticación JWT + Control de Acceso por Roles
+Maneja hash de contraseñas, generación y validación de tokens JWT,
+y dependencias de verificación de rol (RBAC).
+
+Roles del sistema:
+  - super_admin: Todo + gestión de usuarios y roles
+  - operador: Todo operativo, sin gestión de usuarios, auditoria propia
+  - visualizador: Solo lectura, medidores asignados, sin comandos ni auditoría
 """
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, List
+from functools import wraps
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -14,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models.usuario import Usuario
+from app.models.usuario import Usuario, UsuarioDispositivo
 
 logger = logging.getLogger(__name__)
 
@@ -101,20 +108,93 @@ def get_optional_user(
         return None
 
 
+# ── Dependencias de Verificación de Rol ─────────────────────────────────────
+
+def require_role(*roles_permitidos: str):
+    """
+    Fábrica de dependencias: verifica que el usuario tenga uno de los roles permitidos.
+
+    Uso:
+        @router.get("/admin", dependencies=[Depends(require_role("super_admin"))])
+        def solo_admin(): ...
+
+        @router.post("/cmd", dependencies=[Depends(require_role("super_admin", "operador"))])
+        def operadores_y_admin(): ...
+    """
+    def dependency(usuario: Usuario = Depends(get_current_user)):
+        if usuario.rol not in roles_permitidos:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acceso denegado. Se requiere rol: {', '.join(roles_permitidos)}. Tu rol: {usuario.rol}",
+            )
+        return usuario
+    return dependency
+
+
+def require_super_admin(usuario: Usuario = Depends(get_current_user)) -> Usuario:
+    """Dependencia: solo super_admin puede acceder."""
+    if usuario.rol != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el Super Administrador puede realizar esta acción",
+        )
+    return usuario
+
+
+def require_operador_or_admin(usuario: Usuario = Depends(get_current_user)) -> Usuario:
+    """Dependencia: super_admin u operador pueden acceder."""
+    if usuario.rol not in ("super_admin", "operador"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo Operadores y Super Administradores pueden realizar esta acción",
+        )
+    return usuario
+
+
+# ── Funciones de Asignación de Dispositivos ─────────────────────────────────
+
+def obtener_dispositivos_asignados(usuario: Usuario, db: Session) -> Optional[List[str]]:
+    """
+    Retorna la lista de device_ids asignados al usuario.
+    - super_admin / operador → None (acceso a todos)
+    - visualizador → lista de device_ids asignados
+    """
+    if usuario.rol in ("super_admin", "operador"):
+        return None  # Sin restricción
+
+    asignaciones = db.query(UsuarioDispositivo.device_id).filter(
+        UsuarioDispositivo.usuario_id == usuario.id
+    ).all()
+    return [a.device_id for a in asignaciones]
+
+
+# ── Seed de Admin por Defecto ───────────────────────────────────────────────
+
 def create_default_admin(db: Session):
-    """Crea un usuario administrador por defecto si no existe ninguno."""
+    """Crea un usuario super_admin por defecto si no existe ninguno."""
     existing = db.query(Usuario).first()
     if existing:
-        return  # Ya hay usuarios
+        # Migración: si existe usuario con rol viejo, actualizar
+        admins = db.query(Usuario).filter(Usuario.rol == "Administrador").all()
+        for admin in admins:
+            admin.rol = "super_admin"
+            logger.info(f"🔄 Rol migrado: {admin.email} Administrador → super_admin")
+        operadores = db.query(Usuario).filter(Usuario.rol == "Operador").all()
+        for op in operadores:
+            op.rol = "operador"
+            logger.info(f"🔄 Rol migrado: {op.email} Operador → operador")
+        if admins or operadores:
+            db.commit()
+        return
 
     admin = Usuario(
         email="admin@medidoriot.com",
         nombre="Admin",
         apellido="Sistema",
         password_hash=hash_password("admin123"),
-        rol="Administrador",
+        rol="super_admin",
         activo=True,
     )
     db.add(admin)
     db.commit()
-    logger.info("👤 Usuario admin creado: admin@medidoriot.com / admin123")
+    logger.info("👤 Usuario super_admin creado: admin@medidoriot.com / admin123")

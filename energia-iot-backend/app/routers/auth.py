@@ -1,16 +1,19 @@
-"""ROUTER: Autenticación - Login, registro, perfil"""
+"""ROUTER: Autenticación - Login, registro, perfil, gestión de usuarios"""
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 
 from app.database import get_db
-from app.models.usuario import Usuario
+from app.models.usuario import Usuario, UsuarioDispositivo, ROLES_VALIDOS
+from app.models.dispositivo import Dispositivo
 from app.services.auth import (
     hash_password,
     verify_password,
     create_access_token,
     get_current_user,
+    require_super_admin,
+    obtener_dispositivos_asignados,
 )
 from app.services.audit import registrar_accion
 
@@ -35,7 +38,7 @@ class RegistroRequest(BaseModel):
     nombre: str
     apellido: str = ""
     password: str
-    rol: str = "Operador"
+    rol: str = "visualizador"
 
 
 class CambiarPasswordRequest(BaseModel):
@@ -51,9 +54,18 @@ class UsuarioResponse(BaseModel):
     rol: str
     iniciales: str
     activo: bool
+    dispositivos_asignados: Optional[List[str]] = None
 
 
-# ── Endpoints ────────────────────────────────────────────────────────────────
+class CambiarRolRequest(BaseModel):
+    rol: str
+
+
+class AsignarDispositivosRequest(BaseModel):
+    device_ids: List[str]
+
+
+# ── Endpoints de Autenticación ──────────────────────────────────────────────
 
 @router.post("/login", response_model=LoginResponse)
 def login(datos: LoginRequest, request: Request, db: Session = Depends(get_db)):
@@ -72,6 +84,9 @@ def login(datos: LoginRequest, request: Request, db: Session = Depends(get_db)):
 
     token = create_access_token(data={"sub": usuario.email})
 
+    # Obtener dispositivos asignados si es visualizador
+    dispositivos = obtener_dispositivos_asignados(usuario, db)
+
     registrar_accion(
         db, accion="login", usuario_email=usuario.email,
         ip_address=request.client.host if request.client else None,
@@ -86,13 +101,15 @@ def login(datos: LoginRequest, request: Request, db: Session = Depends(get_db)):
             "apellido": usuario.apellido,
             "rol": usuario.rol,
             "iniciales": usuario.iniciales,
+            "dispositivos_asignados": dispositivos,
         },
     )
 
 
 @router.get("/me", response_model=UsuarioResponse)
-def obtener_perfil(usuario: Usuario = Depends(get_current_user)):
+def obtener_perfil(usuario: Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener información del usuario autenticado."""
+    dispositivos = obtener_dispositivos_asignados(usuario, db)
     return UsuarioResponse(
         id=usuario.id,
         email=usuario.email,
@@ -101,6 +118,7 @@ def obtener_perfil(usuario: Usuario = Depends(get_current_user)):
         rol=usuario.rol,
         iniciales=usuario.iniciales,
         activo=usuario.activo,
+        dispositivos_asignados=dispositivos,
     )
 
 
@@ -109,13 +127,13 @@ def registrar_usuario(
     datos: RegistroRequest,
     request: Request,
     db: Session = Depends(get_db),
-    usuario_actual: Usuario = Depends(get_current_user),
+    usuario_actual: Usuario = Depends(require_super_admin),
 ):
-    """Registrar un nuevo usuario (solo administradores)."""
-    if usuario_actual.rol != "Administrador":
+    """Registrar un nuevo usuario (solo super_admin)."""
+    if datos.rol not in ROLES_VALIDOS:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo los administradores pueden crear usuarios",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Rol inválido. Roles válidos: {', '.join(ROLES_VALIDOS)}",
         )
 
     existente = db.query(Usuario).filter(Usuario.email == datos.email).first()
@@ -173,3 +191,137 @@ def cambiar_password(
     )
 
     return {"mensaje": "Contraseña actualizada correctamente"}
+
+
+# ── Gestión de Usuarios (solo super_admin) ──────────────────────────────────
+
+@router.get("/usuarios", response_model=List[UsuarioResponse])
+def listar_usuarios(
+    db: Session = Depends(get_db),
+    _admin: Usuario = Depends(require_super_admin),
+):
+    """Listar todos los usuarios del sistema (solo super_admin)."""
+    usuarios = db.query(Usuario).order_by(Usuario.created_at).all()
+    resultado = []
+    for u in usuarios:
+        dispositivos = obtener_dispositivos_asignados(u, db)
+        resultado.append(UsuarioResponse(
+            id=u.id, email=u.email, nombre=u.nombre, apellido=u.apellido,
+            rol=u.rol, iniciales=u.iniciales, activo=u.activo,
+            dispositivos_asignados=dispositivos,
+        ))
+    return resultado
+
+
+@router.patch("/usuarios/{usuario_id}/rol")
+def cambiar_rol(
+    usuario_id: int,
+    datos: CambiarRolRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_super_admin),
+):
+    """Cambiar el rol de un usuario (solo super_admin)."""
+    if datos.rol not in ROLES_VALIDOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Rol inválido. Roles válidos: {', '.join(ROLES_VALIDOS)}",
+        )
+
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if usuario.id == admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes cambiar tu propio rol",
+        )
+
+    rol_anterior = usuario.rol
+    usuario.rol = datos.rol
+    db.commit()
+
+    registrar_accion(
+        db, accion="cambio_rol", usuario_email=admin.email,
+        recurso="usuario", recurso_id=str(usuario.id),
+        detalles={"email": usuario.email, "rol_anterior": rol_anterior, "rol_nuevo": datos.rol},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {"mensaje": f"Rol de {usuario.email} cambiado de {rol_anterior} a {datos.rol}"}
+
+
+@router.patch("/usuarios/{usuario_id}/activo")
+def toggle_activo(
+    usuario_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_super_admin),
+):
+    """Activar/desactivar un usuario (solo super_admin)."""
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if usuario.id == admin.id:
+        raise HTTPException(status_code=400, detail="No puedes desactivarte a ti mismo")
+
+    usuario.activo = not usuario.activo
+    db.commit()
+
+    registrar_accion(
+        db, accion="usuario_activado" if usuario.activo else "usuario_desactivado",
+        usuario_email=admin.email, recurso="usuario", recurso_id=str(usuario.id),
+        detalles={"email": usuario.email},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {"mensaje": f"Usuario {usuario.email} {'activado' if usuario.activo else 'desactivado'}"}
+
+
+@router.put("/usuarios/{usuario_id}/dispositivos")
+def asignar_dispositivos(
+    usuario_id: int,
+    datos: AsignarDispositivosRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_super_admin),
+):
+    """
+    Asignar dispositivos a un usuario visualizador (solo super_admin).
+    Reemplaza todas las asignaciones existentes.
+    """
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Verificar que los device_ids existan
+    for device_id in datos.device_ids:
+        disp = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
+        if not disp:
+            raise HTTPException(status_code=404, detail=f"Dispositivo '{device_id}' no encontrado")
+
+    # Eliminar asignaciones existentes
+    db.query(UsuarioDispositivo).filter(
+        UsuarioDispositivo.usuario_id == usuario_id
+    ).delete()
+
+    # Crear nuevas asignaciones
+    for device_id in datos.device_ids:
+        asignacion = UsuarioDispositivo(usuario_id=usuario_id, device_id=device_id)
+        db.add(asignacion)
+
+    db.commit()
+
+    registrar_accion(
+        db, accion="dispositivos_asignados", usuario_email=admin.email,
+        recurso="usuario", recurso_id=str(usuario.id),
+        detalles={"email": usuario.email, "device_ids": datos.device_ids},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {
+        "mensaje": f"{len(datos.device_ids)} dispositivo(s) asignados a {usuario.email}",
+        "device_ids": datos.device_ids,
+    }

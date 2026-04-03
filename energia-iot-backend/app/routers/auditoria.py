@@ -9,7 +9,7 @@ from datetime import datetime
 from app.database import get_db
 from app.models.audit_log import AuditLog
 from app.models.usuario import Usuario
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, require_operador_or_admin
 
 router = APIRouter(prefix="/auditoria", tags=["Auditoría"])
 
@@ -45,13 +45,23 @@ def listar_auditoria(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
-    _usuario: Usuario = Depends(get_current_user),
+    usuario: Usuario = Depends(require_operador_or_admin),
 ):
-    """Listar registros de auditoría con filtros opcionales. Requiere autenticación."""
+    """
+    Listar registros de auditoría.
+    - super_admin: ve toda la auditoría
+    - operador: solo ve sus propias acciones
+    - visualizador: no tiene acceso (bloqueado por require_operador_or_admin)
+    """
     query = db.query(AuditLog)
 
-    if usuario_email:
+    # Operador solo ve sus propias acciones
+    if usuario.es_operador:
+        query = query.filter(AuditLog.usuario_email == usuario.email)
+    elif usuario_email:
+        # Super admin puede filtrar por cualquier usuario
         query = query.filter(AuditLog.usuario_email == usuario_email)
+
     if accion:
         query = query.filter(AuditLog.accion == accion)
     if recurso:

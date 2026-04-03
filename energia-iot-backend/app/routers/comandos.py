@@ -9,7 +9,7 @@ from typing import Optional
 from app.database import get_db
 from app.models.dispositivo import Dispositivo
 from app.models.usuario import Usuario
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, require_operador_or_admin
 from app.services.audit import registrar_accion
 from app.services.mqtt_client import get_mqtt_client
 
@@ -81,11 +81,12 @@ def enviar_comando(
     datos: ComandoRequest,
     request: Request,
     db: Session = Depends(get_db),
-    usuario: Usuario = Depends(get_current_user),
+    usuario: Usuario = Depends(require_operador_or_admin),
 ):
     """
     Enviar un comando al dispositivo vía MQTT.
     El comando se publica en el topic medidor/{device_id}/comando.
+    Solo super_admin y operador pueden enviar comandos.
     """
     # Validar dispositivo
     dispositivo = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()

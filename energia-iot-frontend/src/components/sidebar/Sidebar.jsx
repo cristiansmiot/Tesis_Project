@@ -1,18 +1,28 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Gauge, Bell, FileText, User, LogOut, Cpu } from 'lucide-react';
+import { Home, Gauge, Bell, FileText, User, LogOut, Cpu, Users } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../../contexts/AuthContext';
 
-const navItems = [
-  { to: '/resumen', icon: Home, label: 'Resumen' },
-  { to: '/medidores', icon: Gauge, label: 'Medidores' },
-  { to: '/eventos', icon: Bell, label: 'Eventos y alarmas' },
-  { to: '/auditoria', icon: FileText, label: 'Auditoría' },
-  { to: '/perfil', icon: User, label: 'Perfil' },
-];
+const ROL_LABELS = {
+  super_admin: 'Super Admin',
+  operador: 'Operador',
+  visualizador: 'Visualizador',
+};
 
 const Sidebar = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, puedeVerAuditoria, puedeGestionarUsuarios } = useAuth();
+
+  // Items de navegacion filtrados por rol
+  const navItems = [
+    { to: '/resumen', icon: Home, label: 'Resumen', visible: true },
+    { to: '/medidores', icon: Gauge, label: 'Medidores', visible: true },
+    { to: '/eventos', icon: Bell, label: 'Eventos y alarmas', visible: true },
+    { to: '/auditoria', icon: FileText, label: 'Auditoría', visible: puedeVerAuditoria },
+    { to: '/usuarios', icon: Users, label: 'Usuarios', visible: puedeGestionarUsuarios },
+    { to: '/perfil', icon: User, label: 'Perfil', visible: true },
+  ];
+
+  const rolLabel = ROL_LABELS[user?.rol] || user?.rol;
 
   return (
     <aside className="w-64 bg-sidebar flex flex-col h-screen shrink-0">
@@ -27,9 +37,9 @@ const Sidebar = () => {
         </div>
       </div>
 
-      {/* Navegación */}
+      {/* Navegacion */}
       <nav className="flex-1 px-3 mt-2 space-y-1">
-        {navItems.map(({ to, icon: Icon, label }) => (
+        {navItems.filter((item) => item.visible).map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}
@@ -58,7 +68,7 @@ const Sidebar = () => {
             <p className="text-white text-sm font-medium truncate">
               {user?.nombre} {user?.apellido}
             </p>
-            <p className="text-gray-400 text-xs">{user?.rol}</p>
+            <p className="text-gray-400 text-xs">{rolLabel}</p>
           </div>
         </div>
         <button
@@ -66,7 +76,7 @@ const Sidebar = () => {
           className="mt-3 flex items-center gap-2 text-gray-400 hover:text-white text-sm transition-colors w-full"
         >
           <LogOut className="w-4 h-4" />
-          Cerrar sesión
+          Cerrar sesion
         </button>
       </div>
     </aside>

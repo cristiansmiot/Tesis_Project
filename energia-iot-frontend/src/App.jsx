@@ -8,6 +8,7 @@ import MedidorDetalle from './pages/MedidorDetalle';
 import Eventos from './pages/Eventos';
 import Auditoria from './pages/Auditoria';
 import Perfil from './pages/Perfil';
+import Usuarios from './pages/Usuarios';
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
         <Route path="/medidores/:deviceId" element={<MedidorDetalle />} />
         <Route path="/eventos" element={<Eventos />} />
         <Route path="/auditoria" element={<Auditoria />} />
+        <Route path="/usuarios" element={<Usuarios />} />
         <Route path="/perfil" element={<Perfil />} />
       </Route>
 

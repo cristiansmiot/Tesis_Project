@@ -8,15 +8,17 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Restaurar sesión desde localStorage
     const stored = localStorage.getItem('auth_user');
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
         setUser(parsed);
-        // Verificar que el token siga válido
-        authAPI.me().catch(() => {
-          // Token expirado, limpiar
+        // Verificar token y actualizar datos (rol puede haber cambiado)
+        authAPI.me().then((data) => {
+          const updated = { ...parsed, rol: data.rol, dispositivos_asignados: data.dispositivos_asignados };
+          setUser(updated);
+          localStorage.setItem('auth_user', JSON.stringify(updated));
+        }).catch(() => {
           localStorage.removeItem('auth_user');
           setUser(null);
         });
@@ -42,6 +44,7 @@ export function AuthProvider({ children }) {
       rol: response.usuario.rol,
       iniciales: response.usuario.iniciales,
       token: response.access_token,
+      dispositivos_asignados: response.usuario.dispositivos_asignados,
     };
 
     setUser(userData);
@@ -54,8 +57,28 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('auth_user');
   };
 
+  // Helpers de permisos derivados del rol
+  const esSuperAdmin = user?.rol === 'super_admin';
+  const esOperador = user?.rol === 'operador';
+  const esVisualizador = user?.rol === 'visualizador';
+  const puedeEnviarComandos = esSuperAdmin || esOperador;
+  const puedeVerAuditoria = esSuperAdmin || esOperador;
+  const puedeGestionarUsuarios = esSuperAdmin;
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      login,
+      logout,
+      isAuthenticated: !!user,
+      esSuperAdmin,
+      esOperador,
+      esVisualizador,
+      puedeEnviarComandos,
+      puedeVerAuditoria,
+      puedeGestionarUsuarios,
+    }}>
       {children}
     </AuthContext.Provider>
   );

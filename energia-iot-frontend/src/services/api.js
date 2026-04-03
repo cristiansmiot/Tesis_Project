@@ -63,6 +63,38 @@ export const authAPI = {
       }),
     });
   },
+
+  // Gestion de usuarios (solo super_admin)
+  listarUsuarios: async () => {
+    return fetchAPI(`${API_BASE_URL}/auth/usuarios`);
+  },
+
+  registrar: async (datos) => {
+    return fetchAPI(`${API_BASE_URL}/auth/registro`, {
+      method: 'POST',
+      body: JSON.stringify(datos),
+    });
+  },
+
+  cambiarRol: async (usuarioId, rol) => {
+    return fetchAPI(`${API_BASE_URL}/auth/usuarios/${usuarioId}/rol`, {
+      method: 'PATCH',
+      body: JSON.stringify({ rol }),
+    });
+  },
+
+  toggleActivo: async (usuarioId) => {
+    return fetchAPI(`${API_BASE_URL}/auth/usuarios/${usuarioId}/activo`, {
+      method: 'PATCH',
+    });
+  },
+
+  asignarDispositivos: async (usuarioId, deviceIds) => {
+    return fetchAPI(`${API_BASE_URL}/auth/usuarios/${usuarioId}/dispositivos`, {
+      method: 'PUT',
+      body: JSON.stringify({ device_ids: deviceIds }),
+    });
+  },
 };
 
 /**

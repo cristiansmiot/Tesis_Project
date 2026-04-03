@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
+import { authAPI } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -11,7 +12,14 @@ export function AuthProvider({ children }) {
     const stored = localStorage.getItem('auth_user');
     if (stored) {
       try {
-        setUser(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        setUser(parsed);
+        // Verificar que el token siga válido
+        authAPI.me().catch(() => {
+          // Token expirado, limpiar
+          localStorage.removeItem('auth_user');
+          setUser(null);
+        });
       } catch {
         localStorage.removeItem('auth_user');
       }
@@ -19,24 +27,26 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
-  // Mock login — Fase 2 conectará con POST /api/v1/auth/login
   const login = async (email, password) => {
     if (!email || !password) {
       throw new Error('Correo y contraseña son requeridos');
     }
-    // Mock: cualquier credencial funciona
-    const mockUser = {
-      id: 1,
-      nombre: 'Juan',
-      apellido: 'Pérez',
-      email,
-      rol: 'Operador',
-      iniciales: 'JP',
-      token: 'mock-jwt-token',
+
+    const response = await authAPI.login(email, password);
+
+    const userData = {
+      id: response.usuario.id,
+      nombre: response.usuario.nombre,
+      apellido: response.usuario.apellido,
+      email: response.usuario.email,
+      rol: response.usuario.rol,
+      iniciales: response.usuario.iniciales,
+      token: response.access_token,
     };
-    setUser(mockUser);
-    localStorage.setItem('auth_user', JSON.stringify(mockUser));
-    return mockUser;
+
+    setUser(userData);
+    localStorage.setItem('auth_user', JSON.stringify(userData));
+    return userData;
   };
 
   const logout = () => {

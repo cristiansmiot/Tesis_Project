@@ -11,7 +11,11 @@ import logging
 
 from app.config import settings
 from app.database import init_db, get_session_local
-from app.routers import dispositivos_router, mediciones_router, salud_router
+from app.routers import (
+    dispositivos_router, mediciones_router, salud_router,
+    auth_router, eventos_router, comandos_router,
+    auditoria_router, dashboard_router,
+)
 from app.services.mqtt_client import create_mqtt_client, get_mqtt_client
 
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL), format="%(asctime)s - %(levelname)s - %(message)s")
@@ -25,6 +29,14 @@ async def lifespan(app: FastAPI):
     logger.info(f"📌 Base de datos: {'PostgreSQL' if not settings.USE_SQLITE else 'SQLite'}")
     try:
         init_db()
+        # Crear usuario admin por defecto si no existe
+        from app.services.auth import create_default_admin
+        from app.database import get_session_local
+        db_session = get_session_local()()
+        try:
+            create_default_admin(db_session)
+        finally:
+            db_session.close()
     except Exception as e:
         logger.error(f"❌ Error inicializando BD: {e} (la API arrancará sin BD)")
         # No raise: permitir que la app suba y responda /health aunque BD falle al inicio
@@ -81,9 +93,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix=settings.API_PREFIX)
 app.include_router(dispositivos_router, prefix=settings.API_PREFIX)
 app.include_router(mediciones_router, prefix=settings.API_PREFIX)
 app.include_router(salud_router, prefix=settings.API_PREFIX)
+app.include_router(eventos_router, prefix=settings.API_PREFIX)
+app.include_router(comandos_router, prefix=settings.API_PREFIX)
+app.include_router(auditoria_router, prefix=settings.API_PREFIX)
+app.include_router(dashboard_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["Root"])

@@ -116,7 +116,7 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Inicializa la base de datos creando todas las tablas."""
-    from app.models import dispositivo, medicion, nodo_salud  # noqa: F401
+    from app.models import dispositivo, medicion, nodo_salud, usuario, evento, audit_log  # noqa: F401
     Base.metadata.create_all(bind=get_engine())
     logger.info("Base de datos inicializada correctamente")
 

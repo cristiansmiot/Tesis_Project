@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useOutletContext, Link } from 'react-router-dom';
+import { useParams, useOutletContext } from 'react-router-dom';
 import { MapPin, Clock, Cpu, Edit } from 'lucide-react';
 import StatusBadge from '../components/common/StatusBadge';
 import TabNav from '../components/common/TabNav';
@@ -9,7 +9,7 @@ import DeviceIndicators from '../components/device/DeviceIndicators';
 import ConsumoHistoricoChart from '../components/charts/ConsumoHistoricoChart';
 import MetricasTransmision from '../components/MetricasTransmision';
 import TablaHistorial from '../components/TablaHistorial';
-import { dispositivosAPI, medicionesAPI, saludAPI } from '../services/api';
+import { dispositivosAPI, medicionesAPI, saludAPI, comandosAPI, eventosAPI } from '../services/api';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen' },
@@ -29,7 +29,10 @@ const MedidorDetalle = () => {
   const [estadisticas, setEstadisticas] = useState(null);
   const [saludData, setSaludData] = useState(null);
   const [metricasTransmision, setMetricasTransmision] = useState(null);
+  const [eventosDevice, setEventosDevice] = useState([]);
   const [cargando, setCargando] = useState(true);
+  const [comandoEnviando, setComandoEnviando] = useState(null);
+  const [comandoMensaje, setComandoMensaje] = useState('');
 
   useEffect(() => {
     cargarDatos();
@@ -44,6 +47,7 @@ const MedidorDetalle = () => {
         medicionesAPI.historico(deviceId, 24),
         dispositivosAPI.salud(deviceId),
         saludAPI.metricas(deviceId, 24),
+        eventosAPI.listar({ device_id: deviceId, limit: 20 }),
       ]);
 
       if (resultados[0].status === 'fulfilled') setDispositivo(resultados[0].value);
@@ -54,10 +58,24 @@ const MedidorDetalle = () => {
       }
       if (resultados[3].status === 'fulfilled') setSaludData(resultados[3].value);
       if (resultados[4].status === 'fulfilled') setMetricasTransmision(resultados[4].value);
+      if (resultados[5].status === 'fulfilled') setEventosDevice(resultados[5].value.eventos || []);
     } catch (err) {
       console.error('Error cargando detalle:', err);
     } finally {
       setCargando(false);
+    }
+  };
+
+  const enviarComando = async (comando) => {
+    setComandoEnviando(comando);
+    setComandoMensaje('');
+    try {
+      const res = await comandosAPI.enviar(deviceId, comando);
+      setComandoMensaje(`${res.mensaje}`);
+    } catch (err) {
+      setComandoMensaje(`Error: ${err.message}`);
+    } finally {
+      setComandoEnviando(null);
     }
   };
 
@@ -116,7 +134,7 @@ const MedidorDetalle = () => {
         <TabNav tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
       </div>
 
-      {/* Contenido de tabs */}
+      {/* Tab: Resumen */}
       {activeTab === 'resumen' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
@@ -128,6 +146,7 @@ const MedidorDetalle = () => {
         </div>
       )}
 
+      {/* Tab: Variables */}
       {activeTab === 'variables' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
@@ -139,6 +158,7 @@ const MedidorDetalle = () => {
         </div>
       )}
 
+      {/* Tab: Histórico */}
       {activeTab === 'historico' && (
         <div className="space-y-6">
           <ConsumoHistoricoChart datos={historial} />
@@ -146,51 +166,105 @@ const MedidorDetalle = () => {
         </div>
       )}
 
+      {/* Tab: Comandos */}
       {activeTab === 'comandos' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <h4 className="text-base font-semibold text-gray-800 mb-4">Comandos disponibles</h4>
           <p className="text-sm text-gray-500 mb-6">
             Envía comandos al medidor a través de MQTT. Los comandos se ejecutan en el siguiente ciclo de comunicación del dispositivo.
           </p>
+
+          {comandoMensaje && (
+            <div className={`mb-4 p-3 rounded-lg text-sm ${
+              comandoMensaje.startsWith('Error')
+                ? 'bg-red-50 text-red-700'
+                : 'bg-green-50 text-green-700'
+            }`}>
+              {comandoMensaje}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <CommandButton
               label="Reiniciar nodo"
               description="Reinicia el microcontrolador ESP32"
               color="blue"
-              disabled
+              loading={comandoEnviando === 'reiniciar'}
+              onClick={() => enviarComando('reiniciar')}
             />
             <CommandButton
               label="Corte de suministro"
               description="Abre el relé de corte de energía"
               color="red"
-              disabled
+              loading={comandoEnviando === 'corte_suministro'}
+              onClick={() => {
+                if (confirm('¿Está seguro de enviar un comando de corte de suministro?')) {
+                  enviarComando('corte_suministro');
+                }
+              }}
             />
             <CommandButton
               label="Sincronizar hora"
               description="Sincroniza el reloj del dispositivo con el servidor"
               color="green"
-              disabled
+              loading={comandoEnviando === 'sincronizar_hora'}
+              onClick={() => enviarComando('sincronizar_hora')}
             />
           </div>
           <p className="text-xs text-gray-400 mt-4">
-            Los comandos estarán disponibles cuando se implemente el endpoint de control en el backend (Fase 2).
+            Nota: El envío del comando no garantiza su ejecución. El dispositivo debe estar conectado y procesará el comando en su siguiente ciclo.
           </p>
         </div>
       )}
 
+      {/* Tab: Eventos */}
       {activeTab === 'eventos' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h4 className="text-base font-semibold text-gray-800 mb-2">Eventos del dispositivo</h4>
-          <p className="text-sm text-gray-500">
-            El historial de eventos y alarmas de este dispositivo estará disponible cuando se implemente el almacenamiento de alertas en el backend (Fase 2).
-          </p>
+          <h4 className="text-base font-semibold text-gray-800 mb-4">
+            Eventos del dispositivo ({eventosDevice.length})
+          </h4>
+          {eventosDevice.length === 0 ? (
+            <p className="text-sm text-gray-400">No hay eventos registrados para este dispositivo.</p>
+          ) : (
+            <div className="space-y-3">
+              {eventosDevice.map((e) => (
+                <div key={e.id} className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  e.activo ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'
+                }`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <StatusBadge
+                        label={e.severidad}
+                        color={e.severidad === 'critical' ? 'red' : e.severidad === 'warning' ? 'yellow' : 'blue'}
+                        showDot={false}
+                      />
+                      <span className="text-xs text-gray-400">
+                        {e.timestamp ? new Date(e.timestamp).toLocaleString('es-CO') : ''}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700">{e.mensaje}</p>
+                    {e.valor != null && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Valor: {e.valor.toFixed(1)} | Umbral: {e.umbral?.toFixed(0) || '—'}
+                      </p>
+                    )}
+                  </div>
+                  {e.activo ? (
+                    <StatusBadge label="Activa" color="red" />
+                  ) : (
+                    <StatusBadge label="Reconocida" color="green" />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 };
 
-const CommandButton = ({ label, description, color, disabled }) => {
+const CommandButton = ({ label, description, color, loading, onClick }) => {
   const colors = {
     blue: 'bg-blue-600 hover:bg-blue-700',
     red: 'bg-red-600 hover:bg-red-700',
@@ -202,12 +276,13 @@ const CommandButton = ({ label, description, color, disabled }) => {
       <h5 className="font-medium text-gray-800 text-sm">{label}</h5>
       <p className="text-xs text-gray-500 mt-1 mb-3">{description}</p>
       <button
-        disabled={disabled}
+        disabled={loading}
+        onClick={onClick}
         className={`w-full py-2 rounded-lg text-white text-sm font-medium transition-colors ${
-          disabled ? 'bg-gray-300 cursor-not-allowed' : colors[color]
+          loading ? 'bg-gray-300 cursor-wait' : colors[color]
         }`}
       >
-        {disabled ? 'No disponible' : 'Ejecutar'}
+        {loading ? 'Enviando...' : 'Ejecutar'}
       </button>
     </div>
   );

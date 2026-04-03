@@ -359,6 +359,37 @@ class MQTTClient:
                     f"PF={power_factor:.2f}"
                 )
 
+                # Auto-generar alertas por voltaje según CREG 024/2015
+                # Nominal 120V, tolerancia ±10% → rango 108V - 132V
+                VOLTAJE_NOMINAL = 120.0
+                VOLTAJE_MIN = VOLTAJE_NOMINAL * 0.9   # 108V
+                VOLTAJE_MAX = VOLTAJE_NOMINAL * 1.1   # 132V
+
+                if voltage > 0 and (voltage > VOLTAJE_MAX or voltage < VOLTAJE_MIN):
+                    from app.models.evento import Evento
+
+                    if voltage > VOLTAJE_MAX:
+                        tipo = "sobrevoltaje"
+                        mensaje = f"Sobrevoltaje detectado: {voltage:.1f}V (límite CREG: {VOLTAJE_MAX:.0f}V)"
+                        umbral = VOLTAJE_MAX
+                    else:
+                        tipo = "subtension"
+                        mensaje = f"Subtensión detectada: {voltage:.1f}V (límite CREG: {VOLTAJE_MIN:.0f}V)"
+                        umbral = VOLTAJE_MIN
+
+                    evento = Evento(
+                        device_id=device_id,
+                        tipo=tipo,
+                        severidad="critical",
+                        valor=voltage,
+                        umbral=umbral,
+                        mensaje=mensaje,
+                        activo=True,
+                    )
+                    db.add(evento)
+                    db.commit()
+                    logger.warning(f"🚨 Alerta CREG auto-generada: {device_id} | {mensaje}")
+
             finally:
                 db.close()
 
@@ -523,7 +554,7 @@ class MQTTClient:
 
     def _process_alert(self, device_id: str, data: dict):
         """
-        Procesa un mensaje de alerta del dispositivo.
+        Procesa un mensaje de alerta del dispositivo y lo persiste en BD.
 
         Formato esperado:
         {
@@ -539,6 +570,42 @@ class MQTTClient:
             f"valor={data.get('value', 'N/A')} | "
             f"msg={data.get('message', '')}"
         )
+
+        if not self._db_session_factory:
+            return
+
+        try:
+            from app.models.evento import Evento
+
+            # Mapear tipo de alerta
+            tipo_map = {
+                "overvoltage": "sobrevoltaje",
+                "undervoltage": "subtension",
+                "overcurrent": "sobrecorriente",
+                "power_loss": "perdida_energia",
+                "communication": "comunicacion_debil",
+            }
+            tipo = tipo_map.get(data.get("type", ""), data.get("type", "alerta_firmware"))
+
+            db = self._db_session_factory()
+            try:
+                evento = Evento(
+                    device_id=device_id,
+                    tipo=tipo,
+                    severidad="critical" if tipo in ("sobrevoltaje", "subtension") else "warning",
+                    valor=data.get("value"),
+                    umbral=data.get("threshold"),
+                    mensaje=data.get("message", f"Alerta: {tipo}"),
+                    activo=True,
+                )
+                db.add(evento)
+                db.commit()
+                logger.info(f"💾 Alerta guardada en BD: {device_id} | {tipo}")
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"❌ Error guardando alerta: {e}", exc_info=True)
 
     # ==========================================================================
     # CONTROL DEL CLIENTE

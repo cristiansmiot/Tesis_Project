@@ -18,11 +18,18 @@ const fetchAPI = async (url, options = {}) => {
     ...options.headers,
   };
 
-  if (token && token !== 'mock-jwt-token') {
+  if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
   const response = await fetch(url, { ...options, headers });
+
+  if (response.status === 401) {
+    // Token expirado o inválido
+    localStorage.removeItem('auth_user');
+    window.location.href = '/login';
+    throw new Error('Sesión expirada');
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
@@ -30,6 +37,32 @@ const fetchAPI = async (url, options = {}) => {
   }
 
   return response.json();
+};
+
+/**
+ * AUTENTICACIÓN
+ */
+export const authAPI = {
+  login: async (email, password) => {
+    return fetchAPI(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  },
+
+  me: async () => {
+    return fetchAPI(`${API_BASE_URL}/auth/me`);
+  },
+
+  cambiarPassword: async (passwordActual, passwordNuevo) => {
+    return fetchAPI(`${API_BASE_URL}/auth/cambiar-password`, {
+      method: 'POST',
+      body: JSON.stringify({
+        password_actual: passwordActual,
+        password_nuevo: passwordNuevo,
+      }),
+    });
+  },
 };
 
 /**
@@ -104,6 +137,76 @@ export const saludAPI = {
 };
 
 /**
+ * EVENTOS Y ALARMAS
+ */
+export const eventosAPI = {
+  listar: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.device_id) searchParams.append('device_id', params.device_id);
+    if (params.tipo) searchParams.append('tipo', params.tipo);
+    if (params.severidad) searchParams.append('severidad', params.severidad);
+    if (params.activo !== undefined) searchParams.append('activo', params.activo);
+    if (params.skip) searchParams.append('skip', params.skip);
+    if (params.limit) searchParams.append('limit', params.limit);
+    return fetchAPI(`${API_BASE_URL}/eventos/?${searchParams}`);
+  },
+
+  activos: async (limit = 20) => {
+    return fetchAPI(`${API_BASE_URL}/eventos/activos?limit=${limit}`);
+  },
+
+  reconocer: async (eventoId) => {
+    return fetchAPI(`${API_BASE_URL}/eventos/${eventoId}/reconocer`, {
+      method: 'PATCH',
+    });
+  },
+};
+
+/**
+ * COMANDOS
+ */
+export const comandosAPI = {
+  disponibles: async (deviceId) => {
+    return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}/comandos/disponibles`);
+  },
+
+  enviar: async (deviceId, comando, parametros = null) => {
+    return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}/comando`, {
+      method: 'POST',
+      body: JSON.stringify({ comando, parametros }),
+    });
+  },
+};
+
+/**
+ * AUDITORÍA
+ */
+export const auditoriaAPI = {
+  listar: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.usuario_email) searchParams.append('usuario_email', params.usuario_email);
+    if (params.accion) searchParams.append('accion', params.accion);
+    if (params.recurso) searchParams.append('recurso', params.recurso);
+    if (params.skip) searchParams.append('skip', params.skip);
+    if (params.limit) searchParams.append('limit', params.limit);
+    return fetchAPI(`${API_BASE_URL}/auditoria/?${searchParams}`);
+  },
+};
+
+/**
+ * DASHBOARD
+ */
+export const dashboardAPI = {
+  resumen: async () => {
+    return fetchAPI(`${API_BASE_URL}/dashboard/resumen`);
+  },
+
+  consumoHorario: async (horas = 24) => {
+    return fetchAPI(`${API_BASE_URL}/dashboard/consumo-horario?horas=${horas}`);
+  },
+};
+
+/**
  * Health check del backend
  */
 export const healthCheck = async () => {
@@ -117,4 +220,7 @@ export const healthCheck = async () => {
   }
 };
 
-export default { dispositivosAPI, medicionesAPI, saludAPI, healthCheck };
+export default {
+  authAPI, dispositivosAPI, medicionesAPI, saludAPI,
+  eventosAPI, comandosAPI, auditoriaAPI, dashboardAPI, healthCheck,
+};

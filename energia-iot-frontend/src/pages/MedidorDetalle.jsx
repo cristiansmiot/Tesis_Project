@@ -1,20 +1,23 @@
 import { useState, useEffect } from 'react';
 import { useParams, useOutletContext } from 'react-router-dom';
-import { MapPin, Clock, Cpu, Edit } from 'lucide-react';
+import { MapPin, Clock, Cpu, Edit, AlertTriangle } from 'lucide-react';
 import StatusBadge from '../components/common/StatusBadge';
 import TabNav from '../components/common/TabNav';
 import DeviceKpiCards from '../components/device/DeviceKpiCards';
 import DeviceInfoSidebar from '../components/device/DeviceInfoSidebar';
 import DeviceIndicators from '../components/device/DeviceIndicators';
+import DeviceStatusPanel from '../components/device/DeviceStatusPanel';
+import DeviceVariablesPanel from '../components/device/DeviceVariablesPanel';
 import ConsumoHistoricoChart from '../components/charts/ConsumoHistoricoChart';
 import MetricasTransmision from '../components/MetricasTransmision';
 import TablaHistorial from '../components/TablaHistorial';
+import ConfirmDialog from '../components/common/ConfirmDialog';
 import { dispositivosAPI, medicionesAPI, saludAPI, comandosAPI, eventosAPI } from '../services/api';
 
 const tabs = [
   { id: 'resumen', label: 'Resumen' },
   { id: 'variables', label: 'Variables' },
-  { id: 'historico', label: 'Histórico' },
+  { id: 'historico', label: 'Historico' },
   { id: 'comandos', label: 'Comandos' },
   { id: 'eventos', label: 'Eventos' },
 ];
@@ -30,9 +33,15 @@ const MedidorDetalle = () => {
   const [saludData, setSaludData] = useState(null);
   const [metricasTransmision, setMetricasTransmision] = useState(null);
   const [eventosDevice, setEventosDevice] = useState([]);
+  const [eventosActivos, setEventosActivos] = useState(0);
   const [cargando, setCargando] = useState(true);
   const [comandoEnviando, setComandoEnviando] = useState(null);
   const [comandoMensaje, setComandoMensaje] = useState('');
+  // Periodo para la grafica del resumen
+  const [periodoResumen, setPeriodoResumen] = useState(24);
+
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, comando: '', label: '' });
 
   useEffect(() => {
     cargarDatos();
@@ -44,7 +53,7 @@ const MedidorDetalle = () => {
       const resultados = await Promise.allSettled([
         dispositivosAPI.obtener(deviceId),
         medicionesAPI.ultima(deviceId),
-        medicionesAPI.historico(deviceId, 24),
+        medicionesAPI.historico(deviceId, 48),
         dispositivosAPI.salud(deviceId),
         saludAPI.metricas(deviceId, 24),
         eventosAPI.listar({ device_id: deviceId, limit: 20 }),
@@ -58,7 +67,11 @@ const MedidorDetalle = () => {
       }
       if (resultados[3].status === 'fulfilled') setSaludData(resultados[3].value);
       if (resultados[4].status === 'fulfilled') setMetricasTransmision(resultados[4].value);
-      if (resultados[5].status === 'fulfilled') setEventosDevice(resultados[5].value.eventos || []);
+      if (resultados[5].status === 'fulfilled') {
+        const evts = resultados[5].value.eventos || [];
+        setEventosDevice(evts);
+        setEventosActivos(evts.filter((e) => e.activo).length);
+      }
     } catch (err) {
       console.error('Error cargando detalle:', err);
     } finally {
@@ -66,7 +79,13 @@ const MedidorDetalle = () => {
     }
   };
 
-  const enviarComando = async (comando) => {
+  const solicitarComando = (comando, label) => {
+    setConfirmDialog({ open: true, comando, label });
+  };
+
+  const confirmarComando = async () => {
+    const comando = confirmDialog.comando;
+    setConfirmDialog({ open: false, comando: '', label: '' });
     setComandoEnviando(comando);
     setComandoMensaje('');
     try {
@@ -82,6 +101,13 @@ const MedidorDetalle = () => {
   const ultimaConexion = dispositivo?.ultima_conexion
     ? new Date(dispositivo.ultima_conexion).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
     : 'N/A';
+
+  // Filtrar historial segun periodo seleccionado en Resumen
+  const ahora = Date.now();
+  const historialResumen = historial.filter((m) => {
+    const ts = new Date(m.timestamp).getTime();
+    return ahora - ts <= periodoResumen * 3600 * 1000;
+  });
 
   return (
     <div>
@@ -101,7 +127,7 @@ const MedidorDetalle = () => {
               )}
               <span className="flex items-center gap-1">
                 <Clock className="w-4 h-4" />
-                Última conexión: {ultimaConexion}
+                Ultima conexion: {ultimaConexion}
               </span>
               {dispositivo?.firmware_version && (
                 <span className="flex items-center gap-1">
@@ -136,12 +162,43 @@ const MedidorDetalle = () => {
 
       {/* Tab: Resumen */}
       {activeTab === 'resumen' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <DeviceIndicators medicion={medicion} />
+        <div className="space-y-6">
+          {/* Fila superior: Grafica de tendencia + Estado/Salud */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              {/* Grafica de consumo con selector de periodo */}
+              <ConsumoHistoricoChart
+                datos={historialResumen}
+                variableInicial="potencia"
+                titulo="Tendencia rapida"
+                periodos={[
+                  { h: 24, label: '24h' },
+                  { h: 48, label: '48h' },
+                ]}
+                periodoActual={periodoResumen}
+                onCambioPeriodo={setPeriodoResumen}
+              />
+            </div>
+            <div className="space-y-6">
+              {/* Estado actual del nodo */}
+              <DeviceStatusPanel
+                dispositivo={dispositivo}
+                medicion={medicion}
+                eventosActivos={eventosActivos}
+                saludData={saludData}
+                metricasTransmision={metricasTransmision}
+              />
+            </div>
           </div>
-          <div>
-            <DeviceInfoSidebar dispositivo={dispositivo} medicion={medicion} />
+
+          {/* Fila inferior: Indicadores + Info */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <DeviceIndicators medicion={medicion} />
+            </div>
+            <div>
+              <DeviceInfoSidebar dispositivo={dispositivo} medicion={medicion} />
+            </div>
           </div>
         </div>
       )}
@@ -150,7 +207,7 @@ const MedidorDetalle = () => {
       {activeTab === 'variables' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
-            <DeviceIndicators medicion={medicion} />
+            <DeviceVariablesPanel medicion={medicion} saludData={saludData} />
           </div>
           <div className="space-y-6">
             <MetricasTransmision metricas={metricasTransmision} />
@@ -158,7 +215,7 @@ const MedidorDetalle = () => {
         </div>
       )}
 
-      {/* Tab: Histórico */}
+      {/* Tab: Historico */}
       {activeTab === 'historico' && (
         <div className="space-y-6">
           <ConsumoHistoricoChart datos={historial} />
@@ -171,7 +228,7 @@ const MedidorDetalle = () => {
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <h4 className="text-base font-semibold text-gray-800 mb-4">Comandos disponibles</h4>
           <p className="text-sm text-gray-500 mb-6">
-            Envía comandos al medidor a través de MQTT. Los comandos se ejecutan en el siguiente ciclo de comunicación del dispositivo.
+            Envia comandos al medidor a traves de MQTT. Los comandos se ejecutan en el siguiente ciclo de comunicacion del dispositivo.
           </p>
 
           {comandoMensaje && (
@@ -184,35 +241,38 @@ const MedidorDetalle = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <CommandButton
               label="Reiniciar nodo"
               description="Reinicia el microcontrolador ESP32"
               color="blue"
               loading={comandoEnviando === 'reiniciar'}
-              onClick={() => enviarComando('reiniciar')}
+              onClick={() => solicitarComando('reiniciar', 'Reiniciar nodo')}
             />
             <CommandButton
               label="Corte de suministro"
-              description="Abre el relé de corte de energía"
+              description="Abre el rele de corte de energia"
               color="red"
               loading={comandoEnviando === 'corte_suministro'}
-              onClick={() => {
-                if (confirm('¿Está seguro de enviar un comando de corte de suministro?')) {
-                  enviarComando('corte_suministro');
-                }
-              }}
+              onClick={() => solicitarComando('corte_suministro', 'Corte de suministro')}
+            />
+            <CommandButton
+              label="Restaurar suministro"
+              description="Cierra el rele para restaurar energia"
+              color="green"
+              loading={comandoEnviando === 'restaurar_suministro'}
+              onClick={() => solicitarComando('restaurar_suministro', 'Restaurar suministro')}
             />
             <CommandButton
               label="Sincronizar hora"
               description="Sincroniza el reloj del dispositivo con el servidor"
-              color="green"
+              color="teal"
               loading={comandoEnviando === 'sincronizar_hora'}
-              onClick={() => enviarComando('sincronizar_hora')}
+              onClick={() => solicitarComando('sincronizar_hora', 'Sincronizar hora')}
             />
           </div>
           <p className="text-xs text-gray-400 mt-4">
-            Nota: El envío del comando no garantiza su ejecución. El dispositivo debe estar conectado y procesará el comando en su siguiente ciclo.
+            Nota: El envio del comando no garantiza su ejecucion. El dispositivo debe estar conectado y procesara el comando en su siguiente ciclo.
           </p>
         </div>
       )}
@@ -245,7 +305,7 @@ const MedidorDetalle = () => {
                     <p className="text-sm text-gray-700">{e.mensaje}</p>
                     {e.valor != null && (
                       <p className="text-xs text-gray-500 mt-1">
-                        Valor: {e.valor.toFixed(1)} | Umbral: {e.umbral?.toFixed(0) || '—'}
+                        Valor: {e.valor.toFixed(1)} | Umbral: {e.umbral?.toFixed(0) || '--'}
                       </p>
                     )}
                   </div>
@@ -260,6 +320,17 @@ const MedidorDetalle = () => {
           )}
         </div>
       )}
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open}
+        title="Confirmar comando"
+        message={`¿Esta seguro de enviar el comando "${confirmDialog.label}" al dispositivo ${deviceId}?`}
+        confirmLabel="Enviar comando"
+        cancelLabel="Cancelar"
+        onConfirm={confirmarComando}
+        onCancel={() => setConfirmDialog({ open: false, comando: '', label: '' })}
+      />
     </div>
   );
 };
@@ -269,6 +340,7 @@ const CommandButton = ({ label, description, color, loading, onClick }) => {
     blue: 'bg-blue-600 hover:bg-blue-700',
     red: 'bg-red-600 hover:bg-red-700',
     green: 'bg-green-600 hover:bg-green-700',
+    teal: 'bg-teal-600 hover:bg-teal-700',
   };
 
   return (

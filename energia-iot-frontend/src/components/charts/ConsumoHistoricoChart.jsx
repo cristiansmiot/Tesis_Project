@@ -36,10 +36,23 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 /**
- * Gráfico de histórico de consumo de un dispositivo.
- * Props: datos = array de mediciones, variable = 'potencia'|'voltaje'|'corriente'
+ * Grafico de historico de consumo de un dispositivo.
+ * Props:
+ *   datos = array de mediciones
+ *   variableInicial = 'potencia'|'voltaje'|'corriente'
+ *   titulo = titulo personalizado (default: 'Historico')
+ *   periodos = array opcional de {h, label} para selector de periodo
+ *   periodoActual = periodo seleccionado
+ *   onCambioPeriodo = callback al cambiar periodo
  */
-const ConsumoHistoricoChart = ({ datos = [], variableInicial = 'potencia' }) => {
+const ConsumoHistoricoChart = ({
+  datos = [],
+  variableInicial = 'potencia',
+  titulo = 'Historico',
+  periodos,
+  periodoActual,
+  onCambioPeriodo,
+}) => {
   const [variable, setVariable] = useState(variableInicial);
 
   const datosFormateados = datos
@@ -59,8 +72,25 @@ const ConsumoHistoricoChart = ({ datos = [], variableInicial = 'potencia' }) => 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-800">Histórico</h3>
+        <h3 className="text-lg font-semibold text-gray-800">{titulo}</h3>
         <div className="flex gap-1">
+          {/* Selector de periodo (si se proporciona) */}
+          {periodos && periodos.map(({ h, label }) => (
+            <button
+              key={h}
+              onClick={() => onCambioPeriodo?.(h)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                periodoActual === h
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {/* Separador si hay ambos */}
+          {periodos && <div className="w-px bg-gray-200 mx-1" />}
+          {/* Selector de variable */}
           {variables.map((v) => (
             <button
               key={v.key}
@@ -79,7 +109,7 @@ const ConsumoHistoricoChart = ({ datos = [], variableInicial = 'potencia' }) => 
 
       {datosFormateados.length === 0 ? (
         <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
-          No hay datos históricos disponibles
+          No hay datos historicos disponibles
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={300}>

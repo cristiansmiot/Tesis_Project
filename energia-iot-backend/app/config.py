@@ -16,8 +16,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "desarrollo-clave-temporal-cambiar-en-produccion"
     
     # Base de datos
-    USE_SQLITE: bool = True  # True = SQLite local, False = PostgreSQL
-    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/energia_iot"
+    # USE_SQLITE se auto-detecta: si DATABASE_URL contiene 'postgresql', usa PostgreSQL
+    USE_SQLITE: bool = True  # Se sobreescribe en auto-detección abajo
+    DATABASE_URL: str = "sqlite:///./energia_iot.db"
+    # Railway inyecta DATABASE_URL automáticamente si se configura como variable referenciada
     
     # MQTT
     MQTT_BROKER: str = "shinkansen.proxy.rlwy.net"

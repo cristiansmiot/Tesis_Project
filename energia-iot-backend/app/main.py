@@ -14,7 +14,7 @@ from app.database import init_db, get_session_local
 from app.routers import (
     dispositivos_router, mediciones_router, salud_router,
     auth_router, eventos_router, comandos_router,
-    auditoria_router, dashboard_router,
+    auditoria_router, dashboard_router, admin_router,
 )
 from app.services.mqtt_client import create_mqtt_client, get_mqtt_client
 
@@ -101,6 +101,7 @@ app.include_router(eventos_router, prefix=settings.API_PREFIX)
 app.include_router(comandos_router, prefix=settings.API_PREFIX)
 app.include_router(auditoria_router, prefix=settings.API_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_PREFIX)
+app.include_router(admin_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["Root"])
@@ -111,7 +112,23 @@ def root():
 @app.get("/health", tags=["Health"])
 def health_check():
     from datetime import datetime
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "database": "PostgreSQL" if not settings.USE_SQLITE else "SQLite"}
+    from app.database import test_connection
+    db_ok = test_connection()
+    mqtt = get_mqtt_client()
+    mqtt_status = mqtt.get_status() if mqtt else {"connected": False}
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": {
+            "type": "PostgreSQL" if not settings.USE_SQLITE else "SQLite",
+            "connected": db_ok,
+        },
+        "mqtt": {
+            "connected": mqtt_status.get("connected", False),
+            "messages_received": mqtt_status.get("messages_received", 0),
+            "messages_saved": mqtt_status.get("messages_saved", 0),
+        },
+    }
 
 
 @app.get("/api/v1/mqtt/status", tags=["MQTT"])

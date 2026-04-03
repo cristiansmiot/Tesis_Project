@@ -21,7 +21,13 @@ _SessionLocal = None
 
 
 def get_database_url() -> str:
-    """Determina y normaliza el URL de base de datos."""
+    """
+    Determina y normaliza el URL de base de datos.
+
+    Auto-detección: si DATABASE_URL contiene 'postgres', usa PostgreSQL
+    independientemente de USE_SQLITE. Esto evita errores de configuración
+    en Railway donde USE_SQLITE podría quedar en True por defecto.
+    """
     url = settings.DATABASE_URL
 
     # Normalizar: Railway a veces emite 'postgres://' que SQLAlchemy 2.x no acepta
@@ -39,11 +45,18 @@ def get_database_url() -> str:
         logger.warning(f"No se pudo parsear URL para debug: {e}")
         logger.info(f"DATABASE_URL raw repr: {repr(url[:50])}")
 
-    if not settings.USE_SQLITE and ("postgresql" in url or "postgres" in url):
-        logger.info("Conectando a PostgreSQL (Railway)")
+    # Auto-detección: si la URL contiene 'postgres', SIEMPRE usar PostgreSQL
+    # (ignora USE_SQLITE para evitar configuración incorrecta en producción)
+    is_postgres = "postgresql" in url or "postgres" in url
+
+    if is_postgres:
+        logger.info("✅ Conectando a PostgreSQL (auto-detectado desde DATABASE_URL)")
         return url
 
-    logger.warning("Usando SQLite para desarrollo local")
+    if not settings.USE_SQLITE:
+        logger.warning("⚠️ USE_SQLITE=False pero DATABASE_URL no contiene 'postgres'. Usando SQLite como fallback.")
+
+    logger.info("📁 Usando SQLite para desarrollo local")
     return "sqlite:///./energia_iot.db"
 
 

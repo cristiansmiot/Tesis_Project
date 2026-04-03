@@ -226,3 +226,58 @@ def seed_mediciones_demo(db: Session = Depends(get_db)):
         "mediciones_creadas": total_creadas,
         "dispositivos": [d.device_id for d in dispositivos],
     }
+
+
+@router.post("/limpiar-dispositivos")
+def limpiar_dispositivos(db: Session = Depends(get_db)):
+    """
+    Limpia dispositivos basura (auto-registrados por error) y actualiza
+    los nombres/ubicaciones de los dispositivos reales.
+    """
+    # Dispositivos a eliminar (basura)
+    ids_eliminar = ["STRING", "ESP32-TEST-001"]
+    eliminados = []
+
+    for device_id in ids_eliminar:
+        disp = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
+        if disp:
+            # Eliminar mediciones asociadas primero
+            db.query(Medicion).filter(Medicion.device_id == device_id).delete()
+            db.delete(disp)
+            eliminados.append(device_id)
+
+    # Actualizar datos de dispositivos reales
+    actualizaciones = {
+        "ESP32-001": {
+            "nombre": "Medidor Principal - Lab IoT",
+            "ubicacion": "Laboratorio IoT - Edificio 67, Bogotá",
+            "descripcion": "Medidor principal conectado al tablero eléctrico. ADE9153A + SIM7080G.",
+        },
+        "ESP32-002": {
+            "nombre": "Medidor Secundario - Casa Cristian",
+            "ubicacion": "Bogotá, Colombia",
+            "descripcion": "Medidor de consumo residencial para pruebas de campo.",
+        },
+        "ESP32-003": {
+            "nombre": "Medidor Pruebas - Banco de trabajo",
+            "ubicacion": "Bogotá, Colombia",
+            "descripcion": "Medidor para validación de firmware y calibración.",
+        },
+    }
+
+    actualizados = []
+    for device_id, datos in actualizaciones.items():
+        disp = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
+        if disp:
+            disp.nombre = datos["nombre"]
+            disp.ubicacion = datos["ubicacion"]
+            disp.descripcion = datos["descripcion"]
+            actualizados.append(device_id)
+
+    db.commit()
+
+    return {
+        "mensaje": f"Limpieza completada: {len(eliminados)} eliminados, {len(actualizados)} actualizados",
+        "eliminados": eliminados,
+        "actualizados": actualizados,
+    }

@@ -2,19 +2,33 @@
  * API Service - Conexión con el backend FastAPI
  */
 
-// En desarrollo usa localhost; en producción usa la variable VITE_API_URL
 const API_BASE_URL = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/v1`
   : 'http://localhost:8000/api/v1';
 
 /**
- * Maneja errores de la API
+ * Fetch con headers de autenticación
  */
-const handleResponse = async (response) => {
+const fetchAPI = async (url, options = {}) => {
+  const stored = localStorage.getItem('auth_user');
+  const token = stored ? JSON.parse(stored)?.token : null;
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  if (token && token !== 'mock-jwt-token') {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url, { ...options, headers });
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || `Error ${response.status}`);
   }
+
   return response.json();
 };
 
@@ -22,38 +36,34 @@ const handleResponse = async (response) => {
  * DISPOSITIVOS
  */
 export const dispositivosAPI = {
-  // Listar todos los dispositivos
-  listar: async () => {
-    const response = await fetch(`${API_BASE_URL}/dispositivos/`);
-    return handleResponse(response);
+  listar: async (skip = 0, limit = 100) => {
+    return fetchAPI(`${API_BASE_URL}/dispositivos/?skip=${skip}&limit=${limit}`);
   },
 
-  // Obtener un dispositivo por ID
   obtener: async (deviceId) => {
-    const response = await fetch(`${API_BASE_URL}/dispositivos/${deviceId}`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}`);
   },
 
-  // Obtener estado del dispositivo
   estado: async (deviceId) => {
-    const response = await fetch(`${API_BASE_URL}/dispositivos/${deviceId}/estado`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}/estado`);
   },
 
-  // Obtener último registro de salud del nodo (indicadores + métricas de transmisión)
   salud: async (deviceId) => {
-    const response = await fetch(`${API_BASE_URL}/dispositivos/${deviceId}/salud`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}/salud`);
   },
 
-  // Crear dispositivo
   crear: async (datos) => {
-    const response = await fetch(`${API_BASE_URL}/dispositivos/`, {
+    return fetchAPI(`${API_BASE_URL}/dispositivos/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(datos),
     });
-    return handleResponse(response);
+  },
+
+  actualizar: async (deviceId, datos) => {
+    return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(datos),
+    });
   },
 };
 
@@ -61,40 +71,22 @@ export const dispositivosAPI = {
  * MEDICIONES
  */
 export const medicionesAPI = {
-  // Listar mediciones
   listar: async (deviceId = null, limit = 100) => {
     const params = new URLSearchParams({ limit: limit.toString() });
     if (deviceId) params.append('device_id', deviceId);
-    const response = await fetch(`${API_BASE_URL}/mediciones/?${params}`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/mediciones/?${params}`);
   },
 
-  // Obtener última medición
   ultima: async (deviceId) => {
-    const response = await fetch(`${API_BASE_URL}/mediciones/${deviceId}/ultima`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/mediciones/${deviceId}/ultima`);
   },
 
-  // Obtener resumen formateado
   resumen: async (deviceId) => {
-    const response = await fetch(`${API_BASE_URL}/mediciones/${deviceId}/resumen`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/mediciones/${deviceId}/resumen`);
   },
 
-  // Obtener histórico con estadísticas
   historico: async (deviceId, horas = 24) => {
-    const response = await fetch(`${API_BASE_URL}/mediciones/${deviceId}/historico?horas=${horas}`);
-    return handleResponse(response);
-  },
-
-  // Crear medición (para pruebas)
-  crear: async (datos) => {
-    const response = await fetch(`${API_BASE_URL}/mediciones/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(datos),
-    });
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/mediciones/${deviceId}/historico?horas=${horas}`);
   },
 };
 
@@ -102,16 +94,12 @@ export const medicionesAPI = {
  * SALUD DEL NODO
  */
 export const saludAPI = {
-  // Obtener métricas de transmisión históricas + PDR
   metricas: async (deviceId, horas = 24) => {
-    const response = await fetch(`${API_BASE_URL}/salud/${deviceId}/metricas?horas=${horas}`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/salud/${deviceId}/metricas?horas=${horas}`);
   },
 
-  // Obtener historial de registros de salud
   historico: async (deviceId, horas = 24, limit = 100) => {
-    const response = await fetch(`${API_BASE_URL}/salud/${deviceId}/historico?horas=${horas}&limit=${limit}`);
-    return handleResponse(response);
+    return fetchAPI(`${API_BASE_URL}/salud/${deviceId}/historico?horas=${horas}&limit=${limit}`);
   },
 };
 
@@ -122,9 +110,10 @@ export const healthCheck = async () => {
   const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
   try {
     const response = await fetch(`${baseUrl}/health`);
-    return await handleResponse(response);
-  } catch (error) {
-    return { status: 'error', message: error.message };
+    if (!response.ok) return { status: 'error' };
+    return await response.json();
+  } catch {
+    return { status: 'error', message: 'No se puede conectar con el backend' };
   }
 };
 

@@ -19,8 +19,15 @@ export default {
           amarillo: '#f59e0b',
           rojo: '#ef4444',
           azul: '#3b82f6',
-        }
-      }
+        },
+        sidebar: {
+          DEFAULT: '#0f172a',
+          hover: '#1e293b',
+        },
+      },
+      borderWidth: {
+        3: '3px',
+      },
     },
   },
   plugins: [],

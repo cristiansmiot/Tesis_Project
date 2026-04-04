@@ -1,3 +1,14 @@
+/**
+ * SIDEBAR — Barra lateral de navegacion principal.
+ *
+ * Muestra los items de navegacion filtrados segun el rol del usuario:
+ *  - Resumen, Medidores, Eventos, Perfil: visibles para todos los roles.
+ *  - Auditoria: visible solo para super_admin y operador (puedeVerAuditoria).
+ *  - Usuarios: visible solo para super_admin (puedeGestionarUsuarios).
+ *
+ * En la parte inferior muestra el nombre, iniciales y rol del usuario,
+ * junto con el boton de cerrar sesion.
+ */
 import { NavLink } from 'react-router-dom';
 import { Home, Gauge, Bell, FileText, User, LogOut, Cpu, Users } from 'lucide-react';
 import clsx from 'clsx';

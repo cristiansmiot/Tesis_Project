@@ -1,3 +1,20 @@
+/**
+ * PAGINA: Detalle del Medidor — vista completa de un dispositivo especifico.
+ *
+ * Tabs disponibles:
+ *  - Resumen: grafica de tendencia rapida (24h/48h), panel de estado del nodo,
+ *    indicadores de energia e informacion del dispositivo.
+ *  - Variables: metricas detalladas de energia y estado del ESP32 con alta precision.
+ *  - Historico: grafica historica completa + tabla de mediciones.
+ *  - Comandos: envio de comandos MQTT (reiniciar, corte, restaurar, sincronizar hora).
+ *    Solo visible para super_admin y operador (puedeEnviarComandos).
+ *    Cada comando requiere confirmacion mediante dialogo modal.
+ *  - Eventos: lista de alarmas del dispositivo (sobrevoltaje, subtension, etc.).
+ *
+ * Control de acceso:
+ *  - La tab "Comandos" se oculta para usuarios visualizador.
+ *  - El backend tambien valida el rol al recibir comandos (doble proteccion).
+ */
 import { useState, useEffect } from 'react';
 import { useParams, useOutletContext } from 'react-router-dom';
 import { MapPin, Clock, Cpu, Edit, AlertTriangle } from 'lucide-react';

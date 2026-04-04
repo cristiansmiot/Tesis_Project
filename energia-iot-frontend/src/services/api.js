@@ -1,5 +1,20 @@
 /**
- * API Service - Conexión con el backend FastAPI
+ * SERVICIO API — Modulo centralizado de comunicacion con el backend FastAPI.
+ *
+ * Estructura:
+ *  - fetchAPI(): funcion base que agrega token JWT, maneja errores 401 (sesion expirada)
+ *    y parsea las respuestas JSON.
+ *  - authAPI: Login, perfil, cambiar contrasena, y gestion de usuarios (RBAC).
+ *  - dispositivosAPI: CRUD de medidores de energia.
+ *  - medicionesAPI: Lecturas de energia (ultima, historico, resumen).
+ *  - saludAPI: Metricas de salud del nodo ESP32 (RSSI, reconexiones, etc.).
+ *  - eventosAPI: Alarmas y eventos (sobrevoltaje, subtension, desconexion).
+ *  - comandosAPI: Envio de comandos MQTT al dispositivo.
+ *  - auditoriaAPI: Registro de actividades del sistema.
+ *  - dashboardAPI: Resumen agregado y consumo horario.
+ *
+ * Variable de entorno: VITE_API_URL (ej: https://backend.up.railway.app)
+ * Si no esta definida, usa http://localhost:8000 para desarrollo local.
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL
@@ -7,7 +22,10 @@ const API_BASE_URL = import.meta.env.VITE_API_URL
   : 'http://localhost:8000/api/v1';
 
 /**
- * Fetch con headers de autenticación
+ * Funcion base de fetch con autenticacion JWT automatica.
+ * - Agrega el header Authorization: Bearer {token} si hay sesion activa.
+ * - Si el backend responde 401, borra la sesion y redirige a /login.
+ * - Parsea errores del backend y los lanza como Error con el mensaje del detalle.
  */
 const fetchAPI = async (url, options = {}) => {
   const stored = localStorage.getItem('auth_user');

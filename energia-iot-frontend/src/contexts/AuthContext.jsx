@@ -1,3 +1,16 @@
+/**
+ * CONTEXTO DE AUTENTICACION — Proveedor global de estado de usuario y permisos.
+ *
+ * Funcionalidades:
+ *  - Almacena el usuario autenticado en localStorage para persistir entre recargas.
+ *  - Al iniciar, verifica el token con /auth/me y actualiza rol y dispositivos asignados
+ *    (por si el super_admin cambio el rol del usuario desde otra sesion).
+ *  - Expone funciones login() y logout() para iniciar y cerrar sesion.
+ *  - Calcula helpers booleanos derivados del rol:
+ *      esSuperAdmin, esOperador, esVisualizador,
+ *      puedeEnviarComandos, puedeVerAuditoria, puedeGestionarUsuarios.
+ *  - Estos helpers se usan en Sidebar, MedidorDetalle, Auditoria, Usuarios, etc.
+ */
 import { createContext, useContext, useState, useEffect } from 'react';
 import { authAPI } from '../services/api';
 

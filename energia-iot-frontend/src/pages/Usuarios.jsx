@@ -1,11 +1,25 @@
+/**
+ * Pagina de Gestion de Usuarios — solo accesible para super_admin.
+ *
+ * Funcionalidades:
+ *  - Listar todos los usuarios del sistema con su rol, estado y dispositivos.
+ *  - Crear nuevos usuarios con seleccion de rol (super_admin, operador, visualizador).
+ *  - Cambiar el rol de un usuario existente (dropdown en la tabla).
+ *  - Activar/desactivar usuarios (no puede desactivarse a si mismo).
+ *  - Asignar dispositivos a usuarios visualizador (modal con checkboxes).
+ *
+ * Proteccion: Si el usuario no es super_admin, se muestra mensaje de acceso denegado.
+ * El backend tambien valida el rol en cada endpoint como segunda capa de seguridad.
+ */
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { UserPlus, Shield, Power, HardDrive, X, Check, AlertTriangle } from 'lucide-react';
+import { UserPlus, Shield, Power, HardDrive, X, Check, AlertTriangle, ShieldOff } from 'lucide-react';
 import StatusBadge from '../components/common/StatusBadge';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import { authAPI, dispositivosAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
+/** Roles disponibles en el sistema con su etiqueta y color para la UI */
 const ROLES = [
   { value: 'super_admin', label: 'Super Admin', color: 'red' },
   { value: 'operador', label: 'Operador', color: 'blue' },
@@ -14,7 +28,18 @@ const ROLES = [
 
 const Usuarios = () => {
   const { refreshKey } = useOutletContext();
-  const { user } = useAuth();
+  const { user, puedeGestionarUsuarios } = useAuth();
+
+  // Verificacion de permisos en el cliente (el backend tambien valida)
+  if (!puedeGestionarUsuarios) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <ShieldOff className="w-16 h-16 text-gray-300 mb-4" />
+        <h3 className="text-lg font-semibold text-gray-600">Acceso denegado</h3>
+        <p className="text-sm text-gray-400 mt-1">Solo el Super Administrador puede gestionar usuarios.</p>
+      </div>
+    );
+  }
 
   const [usuarios, setUsuarios] = useState([]);
   const [dispositivos, setDispositivos] = useState([]);

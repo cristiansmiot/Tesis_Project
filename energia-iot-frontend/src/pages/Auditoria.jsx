@@ -1,13 +1,37 @@
+/**
+ * Pagina de Auditoria — registro de actividades y cambios en el sistema.
+ *
+ * Control de acceso:
+ *  - super_admin: ve toda la auditoria y puede filtrar por usuario.
+ *  - operador: solo ve sus propias acciones (filtrado por el backend).
+ *  - visualizador: NO tiene acceso — se muestra mensaje de acceso denegado.
+ *
+ * Los registros incluyen: login, comandos enviados, cambios de rol,
+ * reconocimiento de alertas, y cualquier otra accion registrada por el backend.
+ */
 import { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import { FileText } from 'lucide-react';
+import { useOutletContext, Navigate } from 'react-router-dom';
+import { FileText, ShieldOff } from 'lucide-react';
 import { auditoriaAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const Auditoria = () => {
   const { refreshKey } = useOutletContext();
+  const { puedeVerAuditoria } = useAuth();
   const [registros, setRegistros] = useState([]);
   const [total, setTotal] = useState(0);
   const [cargando, setCargando] = useState(true);
+
+  // Redirigir si el usuario no tiene permisos para ver auditoria
+  if (!puedeVerAuditoria) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <ShieldOff className="w-16 h-16 text-gray-300 mb-4" />
+        <h3 className="text-lg font-semibold text-gray-600">Acceso denegado</h3>
+        <p className="text-sm text-gray-400 mt-1">No tienes permisos para ver la auditoria del sistema.</p>
+      </div>
+    );
+  }
 
   useEffect(() => {
     cargarRegistros();

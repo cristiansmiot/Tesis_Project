@@ -554,21 +554,28 @@ class MQTTClient:
 
     def _process_alert(self, device_id: str, data: dict):
         """
-        Procesa un mensaje de alerta del dispositivo y lo persiste en BD.
+        Procesa un mensaje del topic /alerta y lo persiste en BD.
 
-        Formato esperado:
-        {
-            "type": "overvoltage",   # Tipo de alerta
-            "value": 135.5,          # Valor que disparó la alerta
-            "threshold": 130.0,      # Umbral configurado
-            "message": "Sobrevoltaje detectado"
-        }
+        Formato SenML RFC 8428 del firmware (activo):
+            {"tipo": "sag"|"swell"|"freq_oor"|"overtemp"|"pq_event",
+             "vrms": 220.5, "pq": 4}
+
+        Formato legacy JSON plano (retrocompatibilidad):
+            {"type": "overvoltage", "value": 135.5, "threshold": 130.0,
+             "message": "..."}
         """
+        # Soporte dual SenML ("tipo") + legacy ("type")
+        tipo_raw = data.get("tipo") or data.get("type") or ""
+        valor = data.get("vrms", data.get("value"))
+        pq_flags = data.get("pq")
+        umbral = data.get("threshold")
+        mensaje_in = data.get("message")
+
         logger.warning(
             f"🚨 ALERTA de {device_id}: "
-            f"tipo={data.get('type', 'unknown')} | "
-            f"valor={data.get('value', 'N/A')} | "
-            f"msg={data.get('message', '')}"
+            f"tipo={tipo_raw or 'unknown'} | "
+            f"valor={valor if valor is not None else 'N/A'} | "
+            f"pq={pq_flags if pq_flags is not None else 'N/A'}"
         )
 
         if not self._db_session_factory:
@@ -577,30 +584,51 @@ class MQTTClient:
         try:
             from app.models.evento import Evento
 
-            # Mapear tipo de alerta
+            # Mapeo: etiquetas firmware (SenML) + legacy EN -> taxonomia backend.
             tipo_map = {
+                # Firmware SenML
+                "sag": "subtension",
+                "swell": "sobrevoltaje",
+                "freq_oor": "frecuencia_fuera_rango",
+                "overtemp": "sobretemperatura",
+                "pq_event": "alerta_pq",
+                # Legacy
                 "overvoltage": "sobrevoltaje",
                 "undervoltage": "subtension",
                 "overcurrent": "sobrecorriente",
                 "power_loss": "perdida_energia",
                 "communication": "comunicacion_debil",
             }
-            tipo = tipo_map.get(data.get("type", ""), data.get("type", "alerta_firmware"))
+            tipo = tipo_map.get(tipo_raw, tipo_raw or "alerta_firmware")
+
+            severidad_critical = {"sobrevoltaje", "subtension", "sobretemperatura"}
+            severidad = "critical" if tipo in severidad_critical else "warning"
+
+            # Mensaje legible: usa el mensaje del payload si viene, si no, construye uno.
+            if mensaje_in:
+                mensaje = mensaje_in
+            elif valor is not None:
+                mensaje = f"Alerta {tipo}: Vrms={valor:.1f}V"
+            else:
+                mensaje = f"Alerta: {tipo}"
 
             db = self._db_session_factory()
             try:
                 evento = Evento(
                     device_id=device_id,
                     tipo=tipo,
-                    severidad="critical" if tipo in ("sobrevoltaje", "subtension") else "warning",
-                    valor=data.get("value"),
-                    umbral=data.get("threshold"),
-                    mensaje=data.get("message", f"Alerta: {tipo}"),
+                    severidad=severidad,
+                    valor=valor,
+                    umbral=umbral,
+                    mensaje=mensaje,
                     activo=True,
                 )
                 db.add(evento)
                 db.commit()
-                logger.info(f"💾 Alerta guardada en BD: {device_id} | {tipo}")
+                logger.info(
+                    f"💾 Alerta guardada en BD: {device_id} | {tipo} | "
+                    f"valor={valor} pq={pq_flags}"
+                )
             finally:
                 db.close()
 

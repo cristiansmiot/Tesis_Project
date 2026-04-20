@@ -28,12 +28,26 @@ class MedicionCreate(MedicionBase):
         return v.strip().upper()
 
 
-class MedicionResponse(MedicionBase):
+class MedicionResponse(BaseModel):
+    # Respuesta sin validadores ge/le: las mediciones historicas pueden tener
+    # freq=0, pf=0, vrms=0 durante arranque/ausencia AC/recovery. Validar
+    # rangos aqui produce 500 al serializar filas reales de la BD.
     id: int
     device_id: str
+    voltaje_rms: float
+    corriente_rms: float
+    potencia_activa: float
+    potencia_reactiva: Optional[float] = 0.0
+    potencia_aparente: Optional[float] = 0.0
+    factor_potencia: Optional[float] = 1.0
+    frecuencia: Optional[float] = 60.0
+    thd_voltaje: Optional[float] = None
+    thd_corriente: Optional[float] = None
+    energia_activa: Optional[float] = 0.0
+    energia_reactiva: Optional[float] = 0.0
     timestamp: datetime
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

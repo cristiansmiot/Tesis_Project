@@ -1,0 +1,68 @@
+set(SRCS
+    "main.c"
+    "../drivers/ade9153a/ade9153a_spi.c"
+    "../drivers/ade9153a/ade9153a_init.c"
+    "../drivers/sim7080g/sim7080g_hal.c"
+    "../drivers/sim7080g/sim7080g_init.c"
+    "../drivers/oled/oled_driver.c"
+    "../drivers/keypad/keypad_driver.c"
+    "../drivers/power_ctrl/power_ctrl_driver.c"
+    "../modules/measurements/voltage.c"
+    "../modules/measurements/current.c"
+    "../modules/measurements/active_power.c"
+    "../modules/measurements/reactive_power.c"
+    "../modules/measurements/apparent_power.c"
+    "../modules/measurements/power_factor.c"
+    "../modules/calibration/msure.c"
+    "../modules/calibration/nvm_calib.c"
+    "../modules/power_quality/sag_swell.c"
+    "../modules/power_quality/harmonics.c"
+    "../modules/power_quality/pq_monitor.c"
+    "../modules/diagnostics/temperature.c"
+    "../modules/diagnostics/fault_handler.c"
+    "../modules/communication/mqtt_client.c"
+    "../modules/communication/data_serializer.c"
+    "../modules/communication/node_health.c"
+    "../modules/ui/display_manager.c"
+    "../modules/ui/menu_handler.c"
+    "../tasks/task_manager.c"
+    "../tasks/task_measurement.c"
+    "../tasks/task_calibration.c"
+    "../tasks/task_power_quality.c"
+    "../tasks/task_communication.c"
+    "../tasks/task_ui.c"
+    "../tasks/task_power_mgmt.c"
+    "../data/meter_data.c"
+    "../data/data_buffer.c"
+    "../utils/logger.c"
+    "../utils/math_utils.c"
+    "../utils/nvm.c"
+)
+
+idf_component_register(
+    SRCS ${SRCS}
+    INCLUDE_DIRS
+        "."
+        "../config"
+        "../drivers/ade9153a"
+        "../drivers/sim7080g"
+        "../drivers/oled"
+        "../drivers/keypad"
+        "../drivers/power_ctrl"
+        "../modules/measurements"
+        "../modules/calibration"
+        "../modules/power_quality"
+        "../modules/diagnostics"
+        "../modules/communication"
+        "../modules/ui"
+        "../tasks"
+        "../data"
+        "../utils"
+    REQUIRES
+        driver
+        esp_timer
+        esp_system
+        nvs_flash
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)

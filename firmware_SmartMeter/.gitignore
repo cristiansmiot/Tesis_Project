@@ -1,0 +1,14 @@
+# Build artifacts (PlatformIO / ESP-IDF)
+.pio/
+build/
+
+# ESP-IDF generated config backups
+sdkconfig
+sdkconfig.old
+sdkconfig.*.old
+
+# Editor/system artifacts
+.vscode/
+*.log
+Thumbs.db
+.DS_Store

@@ -51,6 +51,14 @@ esp_err_t sim7080g_activate_pdp(void);
 esp_err_t sim7080g_recover_network(void);
 
 /**
+ * @brief Cicla el contexto PDP (desactiva → 2s → reactiva).
+ * Necesario cuando AT+SMDISC falla con "operation not allowed":
+ * libera la sesion TCP subyacente para que MQTT pueda reconectar.
+ * @return ESP_OK si el contexto se reactivó correctamente.
+ */
+esp_err_t sim7080g_cycle_pdp(void);
+
+/**
  * @brief Verifica estado runtime de red+attach+PDP consultando AT.
  * @param void Sin parametros.
  * @return ESP_OK si red y PDP siguen listos.

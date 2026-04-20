@@ -559,18 +559,22 @@ esp_err_t mqtt_client_recover(void)
 {
     s_connected = false;
 
-    // Siempre intenta SMDISC para limpiar sesion MQTT interna del SIM7080G.
-    // Sin esto, SMCONN puede fallar con ERROR despues de un power-cycle
-    // del modem aunque la red este OK (CEREG=5, CGATT=1, CNACT activo).
-    // Esperar 1s despues de SMDISC para que el modem libere el estado
-    // interno y permita reconfigurar LWT (TOPICWILL/MESSAGEWILL).
-    const esp_err_t disc_err = mqtt_client_send_cmd_with_log(AT_SMDISC,
-                                                             1500U,
-                                                             0U,
-                                                             "SMDISC recovery",
-                                                             true);
+    // Intenta SMDISC para limpiar la sesion MQTT interna del SIM7080G.
+    // Si falla con "operation not allowed" el estado TCP subyacente esta
+    // atascado: ciclar el contexto PDP es la unica forma de liberarlo.
+    char smdisc_resp[64];
+    smdisc_resp[0] = '\0';
+    const esp_err_t disc_err = sim7080g_hal_send_cmd(AT_SMDISC,
+                                                     NULL,
+                                                     smdisc_resp,
+                                                     sizeof(smdisc_resp),
+                                                     1500U,
+                                                     0U);
     if (disc_err == ESP_OK) {
         vTaskDelay(pdMS_TO_TICKS(300U));
+    } else if (mqtt_client_resp_has_op_not_allowed(smdisc_resp)) {
+        LOG_WARN(TAG, "SMDISC operation not allowed - cycling PDP to reset MQTT FSM");
+        (void)sim7080g_cycle_pdp();
     }
 
     // Fuerza reprovisionar perfil MQTT despues de cualquier fallo.

@@ -39,6 +39,7 @@ static const uint8_t k_health_fail_force_reprobe = 1U;
 #define AT_CGDCONT_FMT      "AT+CGDCONT=%u,\"IP\",\"%s\""
 #define AT_CNCFG_FMT        "AT+CNCFG=%u,1,\"%s\""
 #define AT_CNACT_ON_FMT     "AT+CNACT=%u,1"
+#define AT_CNACT_OFF_FMT    "AT+CNACT=%u,0"
 #define AT_CNACT_QUERY      "AT+CNACT?"
 #define AT_CGNAPN_QUERY     "AT+CGNAPN"
 #define AT_CPSI_QUERY       "AT+CPSI?"
@@ -697,6 +698,33 @@ esp_err_t sim7080g_activate_pdp(void)
     s_state = (uint8_t)(s_state | SIM7080G_STATE_PDP_READY);
     s_state = (uint8_t)(s_state & ((uint8_t)~SIM7080G_STATE_ERROR));
     return ESP_OK;
+}
+
+esp_err_t sim7080g_cycle_pdp(void)
+{
+    char cmd[64];
+    char response[128];
+
+    // Desactiva PDP para forzar reset del stack TCP del modem.
+    // Necesario cuando AT+SMDISC falla con "operation not allowed":
+    // el SIM7080G tiene la FSM MQTT atascada en estado conectando y
+    // solo un ciclo PDP libera la sesion TCP subyacente.
+    (void)snprintf(cmd, sizeof(cmd), AT_CNACT_OFF_FMT, (unsigned)METER_SIM7080G_PDP_CID);
+    response[0] = '\0';
+    (void)sim7080g_hal_send_cmd(cmd, NULL, response, sizeof(response), 3000U, 1U);
+    LOG_INFO(TAG, "PDP cycle deactivate. resp=%s", response);
+
+    vTaskDelay(pdMS_TO_TICKS(2000U));
+
+    s_state = (uint8_t)(s_state & ((uint8_t)~SIM7080G_STATE_PDP_READY));
+    const esp_err_t err = sim7080g_activate_pdp_cid((uint8_t)METER_SIM7080G_PDP_CID);
+    if (err == ESP_OK) {
+        s_state = (uint8_t)(s_state | SIM7080G_STATE_PDP_READY);
+        LOG_INFO(TAG, "PDP cycle reactivate OK");
+    } else {
+        LOG_WARN(TAG, "PDP cycle reactivate failed: %s", esp_err_to_name(err));
+    }
+    return err;
 }
 
 esp_err_t sim7080g_recover_network(void)

@@ -88,7 +88,9 @@ static void task_communication(void *pvParameters)
 
     bool mqtt_profile_ready = false;
     bool mqtt_session_ready = false;
-    char payload[512];
+    // 768 B: cabe /datos (~350 B), /estado (~540 B con IMEI) y /alerta (~300 B).
+    // Antes era 512 y /estado llegaba a truncarse (len=535).
+    char payload[768];
     // Snapshot compartido entre todos los topics del ciclo actual.
     MeterData_t snap = {0};
     // Timer para publicacion periodica del topic /estado (salud del nodo).

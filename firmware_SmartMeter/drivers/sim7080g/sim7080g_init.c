@@ -8,15 +8,29 @@
 #include "freertos/task.h"
 #include "meter_config.h"
 #include "sim7080g_hal.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "logger.h"
 
 static const char *TAG = "sim7080g_init";
 static uint8_t s_state;
 static uint32_t s_detected_baudrate;
+// Ultimo baud al que se obtuvo respuesta AT (persistido en NVS).
+// Se preserva a traves de resets de s_detected_baudrate para que el
+// proximo probe lo intente primero con timeout agresivo y evite el scan
+// completo (~22 s) tras caidas de MQTT.
+static uint32_t s_last_known_baud;
 static uint8_t s_health_fail_streak;
 static char s_runtime_apn[64];
 static char s_imei[20];        // 15 dígitos IMEI + '\0', leído con AT+GSN
 static const uint32_t k_probe_at_timeout_ms = 1500U;
+// Timeout corto para el "quick-AT" contra el baud cacheado antes de lanzar
+// el probe completo. Con el modem ya a 57600 responde en <200 ms.
+static const uint32_t k_quick_at_timeout_ms = 500U;
+
+// Namespace y claves NVS para persistir el baud detectado.
+#define SIM7080G_NVS_NAMESPACE  "sim7080g"
+#define SIM7080G_NVS_KEY_BAUD   "baud"
 static const uint32_t k_network_query_timeout_ms = 1500U;
 static const uint32_t k_runtime_query_timeout_ms = 1000U;
 static const uint32_t k_sim_ready_timeout_ms = 30000U;
@@ -77,6 +91,69 @@ static bool sim7080g_response_reg_ready(const char *response, const char *prefix
 static const char *sim7080g_select_apn(void)
 {
     return (s_runtime_apn[0] != '\0') ? s_runtime_apn : METER_SIM7080G_APN;
+}
+
+// ------------------------------------------------------------------
+// Persistencia del ultimo baud conocido en NVS.
+// Asume nvs_flash_init() ya invocado (lo hace nvm_calib_init en el boot).
+// Si NVS no esta listo las funciones degradan silenciosamente: el probe
+// completo sigue funcionando.
+// ------------------------------------------------------------------
+static esp_err_t sim7080g_baud_nvs_load(uint32_t *out_baud)
+{
+    if (out_baud == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(SIM7080G_NVS_NAMESPACE, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    uint32_t val = 0U;
+    err = nvs_get_u32(h, SIM7080G_NVS_KEY_BAUD, &val);
+    nvs_close(h);
+    if (err == ESP_OK) {
+        *out_baud = val;
+    }
+    return err;
+}
+
+static void sim7080g_baud_nvs_save(uint32_t baud)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(SIM7080G_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        LOG_WARN(TAG, "nvs_open(%s) rw failed: %s", SIM7080G_NVS_NAMESPACE,
+                 esp_err_to_name(err));
+        return;
+    }
+    err = nvs_set_u32(h, SIM7080G_NVS_KEY_BAUD, baud);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    if (err != ESP_OK) {
+        LOG_WARN(TAG, "nvs baud save failed: %s", esp_err_to_name(err));
+    }
+    nvs_close(h);
+}
+
+// Intenta un AT rapido contra un baud especifico. Si responde, deja la HAL
+// configurada en ese baud y devuelve ESP_OK. Usada para evitar el scan
+// completo cuando ya conocemos el baud del modem.
+static esp_err_t sim7080g_try_baud_quick(uint32_t baud)
+{
+    const sim7080g_hal_config_t cfg = {
+        .uart_num = SIM7080G_UART_NUM,
+        .tx_pin   = SIM7080G_UART_TX,
+        .rx_pin   = SIM7080G_UART_RX,
+        .baudrate = baud,
+    };
+    esp_err_t err = sim7080g_hal_init(&cfg);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return sim7080g_hal_send_cmd(AT_BASIC, NULL, NULL, 0U,
+                                 k_quick_at_timeout_ms, 1U);
 }
 
 static esp_err_t sim7080g_query_network_registration(char *response,
@@ -411,6 +488,29 @@ static bool sim7080g_baud_already_tested(uint32_t baud, size_t tested_count, con
 
 static esp_err_t sim7080g_probe_modem(void)
 {
+    // ---- Fast path: quick-AT al ultimo baud conocido ----
+    // Primero probamos s_last_known_baud en RAM (preservado en resets blandos).
+    // Si no hay, cargamos el valor persistido en NVS. Evita un scan completo
+    // de ~22 s cuando el modem sigue respondiendo pero la sesion MQTT cayo.
+    if (s_last_known_baud == 0U) {
+        uint32_t nvs_baud = 0U;
+        if (sim7080g_baud_nvs_load(&nvs_baud) == ESP_OK && nvs_baud != 0U) {
+            s_last_known_baud = nvs_baud;
+            LOG_INFO(TAG, "baud cargado desde NVS: %lu", (unsigned long)nvs_baud);
+        }
+    }
+    if (s_last_known_baud != 0U) {
+        if (sim7080g_try_baud_quick(s_last_known_baud) == ESP_OK) {
+            s_detected_baudrate = s_last_known_baud;
+            LOG_INFO(TAG, "SIM7080G quick-AT OK @%lu (skip probe)",
+                     (unsigned long)s_detected_baudrate);
+            return ESP_OK;
+        }
+        LOG_WARN(TAG, "quick-AT @%lu fallo, lanzando probe completo",
+                 (unsigned long)s_last_known_baud);
+    }
+
+    // ---- Slow path: scan completo de la lista de candidatos ----
     uint32_t tested[sizeof(k_sim7080g_baud_candidates) / sizeof(k_sim7080g_baud_candidates[0])];
     size_t tested_count = 0U;
 
@@ -450,6 +550,13 @@ static esp_err_t sim7080g_probe_modem(void)
                      SIM7080G_UART_NUM,
                      SIM7080G_UART_TX,
                      SIM7080G_UART_RX);
+            // Actualiza cache RAM + NVS si cambio.
+            if (s_last_known_baud != baud) {
+                s_last_known_baud = baud;
+                sim7080g_baud_nvs_save(baud);
+                LOG_INFO(TAG, "baud cache NVS actualizado: %lu",
+                         (unsigned long)baud);
+            }
             return ESP_OK;
         }
 
@@ -536,6 +643,12 @@ esp_err_t sim7080g_init(void)
             };
             if (sim7080g_hal_init(&new_cfg) == ESP_OK) {
                 s_detected_baudrate = (uint32_t)SIM7080G_BAUD_RATE;
+                // Mantener cache coherente: ahora el modem vive en SIM7080G_BAUD_RATE
+                // tanto en RAM (IPR + AT&W) como en el ESP32 (HAL reconfigurada).
+                if (s_last_known_baud != (uint32_t)SIM7080G_BAUD_RATE) {
+                    s_last_known_baud = (uint32_t)SIM7080G_BAUD_RATE;
+                    sim7080g_baud_nvs_save((uint32_t)SIM7080G_BAUD_RATE);
+                }
                 LOG_INFO(TAG, "baud persistido y HAL reconfigurada a %lu", (unsigned long)SIM7080G_BAUD_RATE);
             }
         }

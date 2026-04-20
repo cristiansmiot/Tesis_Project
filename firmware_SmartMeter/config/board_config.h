@@ -44,6 +44,27 @@
 #define OLED_I2C_CLK_HZ         100000
 #define OLED_I2C_TIMEOUT_MS     250U
 
+// Sprint 6 - DS3231 RTC (comparte bus I2C_NUM_0 con OLED)
+// Direcciones: OLED=0x3C, DS3231=0x68 -> sin colision.
+// NO redefinir SDA/SCL; se reutilizan OLED_SDA/OLED_SCL y OLED_I2C_PORT.
+#define DS3231_I2C_ADDR         0x68
+#define DS3231_I2C_TIMEOUT_MS   250U
+
+// Sprint 6 - MicroSD Card (bus SPI3_HOST dedicado, aislado del ADE9153A)
+// Pines elegidos contiguos en el header J3 y lejos de strapping/JTAG:
+// 4, 5, 6, 7 son GPIOs generales sin funciones especiales en ESP32-S3.
+// Evitamos compartir SPI2_HOST con ADE para no arriesgar el muestreo
+// de 4 kHz del metrologia.
+#define SD_SPI_HOST             SPI3_HOST
+#define SD_PIN_MOSI             4
+#define SD_PIN_MISO             5
+#define SD_PIN_SCLK             6
+#define SD_PIN_CS               7
+// Frecuencia de operacion; en init se usa 400 kHz por SPI_SDIO.
+#define SD_SPI_CLK_HZ           20000000
+// Punto de montaje VFS.
+#define SD_MOUNT_POINT          "/sdcard"
+
 // Sprint 4 - Botones navegacion
 // GPIO1 y GPIO2 son entradas generales y quedan juntos en el header J3.
 // GPIO42 tambien queda contiguo en el header y funciona bien como entrada,

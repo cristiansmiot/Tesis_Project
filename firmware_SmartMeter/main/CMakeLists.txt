@@ -7,6 +7,8 @@ set(SRCS
     "../drivers/oled/oled_driver.c"
     "../drivers/keypad/keypad_driver.c"
     "../drivers/power_ctrl/power_ctrl_driver.c"
+    "../drivers/ds3231/ds3231.c"
+    "../drivers/sd_storage/sd_storage.c"
     "../modules/measurements/voltage.c"
     "../modules/measurements/current.c"
     "../modules/measurements/active_power.c"
@@ -49,6 +51,8 @@ idf_component_register(
         "../drivers/oled"
         "../drivers/keypad"
         "../drivers/power_ctrl"
+        "../drivers/ds3231"
+        "../drivers/sd_storage"
         "../modules/measurements"
         "../modules/calibration"
         "../modules/power_quality"
@@ -63,6 +67,8 @@ idf_component_register(
         esp_timer
         esp_system
         nvs_flash
+        fatfs
+        sdmmc
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)

@@ -7,12 +7,14 @@
 #include "apparent_power.h"
 #include "conversion_constants.h"
 #include "current.h"
+#include "ds3231.h"
 #include "fault_handler.h"
 #include "logger.h"
 #include "meter_config.h"
 #include "meter_data.h"
 #include "power_factor.h"
 #include "reactive_power.h"
+#include "sd_storage.h"
 #include "task_manager.h"
 #include "temperature.h"
 #include "voltage.h"
@@ -63,6 +65,37 @@ void app_main(void)
             fault_set(FAULT_INIT, "ADE boot degraded mode");
         } else {
             LOG_INFO(TAG, "ADE9153A detected OK");
+        }
+    }
+
+    // --- RTC DS3231 (I2C compartido con OLED) ---
+    // No bloqueante: si falla, el sistema sigue usando el timestamp del
+    // backend (bt=0 en SenML) y la hora interna del ESP32 (sin respaldo
+    // por bateria). El log permite diagnosticar cableado I2C.
+    {
+        const esp_err_t rtc_err = ds3231_init();
+        if (rtc_err != ESP_OK) {
+            LOG_WARN(TAG, "DS3231 init fallo: %s (continuando sin RTC)",
+                     esp_err_to_name(rtc_err));
+        }
+    }
+
+    // --- Almacenamiento MicroSD (SPI3_HOST dedicado) ---
+    // No bloqueante: si no hay tarjeta insertada o esta sin formato FAT,
+    // el sistema sigue funcionando solo con MQTT (modo actual). La SD se
+    // usara como buffer de respaldo cuando MQTT no este disponible.
+    {
+        const esp_err_t sd_err = sd_storage_init();
+        if (sd_err != ESP_OK) {
+            LOG_WARN(TAG, "SD init fallo: %s (continuando sin SD)",
+                     esp_err_to_name(sd_err));
+        } else {
+            uint32_t total_mb = 0U;
+            uint32_t free_mb = 0U;
+            if (sd_storage_get_usage(&total_mb, &free_mb) == ESP_OK) {
+                LOG_INFO(TAG, "SD: %lu/%lu MB libres",
+                         (unsigned long)free_mb, (unsigned long)total_mb);
+            }
         }
     }
 

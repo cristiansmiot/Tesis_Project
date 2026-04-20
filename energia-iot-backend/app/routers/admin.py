@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
 from datetime import datetime, timezone
 
+from fastapi import Query
 from app.database import get_db, get_engine
 from app.models.dispositivo import Dispositivo
 from app.models.medicion import Medicion
@@ -14,6 +15,8 @@ from app.models.audit_log import AuditLog
 from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
+_RESET_TOKEN = "RESET-2026-PROD"
 
 
 @router.get("/diagnostico")
@@ -280,4 +283,49 @@ def limpiar_dispositivos(db: Session = Depends(get_db)):
         "mensaje": f"Limpieza completada: {len(eliminados)} eliminados, {len(actualizados)} actualizados",
         "eliminados": eliminados,
         "actualizados": actualizados,
+    }
+
+
+@router.post("/reset-datos")
+def reset_datos(
+    token: str = Query(..., description="Token de confirmacion: RESET-2026-PROD"),
+    db: Session = Depends(get_db),
+    _usuario: Usuario = Depends(get_current_user),
+):
+    """
+    Borra todas las mediciones, registros de salud, eventos y audit_log.
+    Preserva dispositivos y usuarios.
+    Requiere token de confirmacion para evitar ejecucion accidental.
+    """
+    if token != _RESET_TOKEN:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Token de confirmacion incorrecto")
+
+    conteos = {}
+
+    conteos["audit_log"] = db.query(AuditLog).count()
+    db.query(AuditLog).delete()
+
+    conteos["eventos"] = db.query(Evento).count()
+    db.query(Evento).delete()
+
+    conteos["nodo_salud"] = db.query(NodoSalud).count()
+    db.query(NodoSalud).delete()
+
+    conteos["mediciones"] = db.query(Medicion).count()
+    db.query(Medicion).delete()
+
+    # Resetear estado de conectividad de todos los dispositivos
+    dispositivos = db.query(Dispositivo).all()
+    for d in dispositivos:
+        d.conectado = False
+        d.ultima_conexion = None
+
+    db.commit()
+
+    return {
+        "mensaje": "Reset completado. El sistema esta listo para captura de datos limpia.",
+        "registros_eliminados": conteos,
+        "dispositivos_reseteados": len(dispositivos),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }

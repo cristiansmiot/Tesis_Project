@@ -1,4 +1,4 @@
-import { Signal, Radio, RefreshCw, BarChart3, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Signal, Radio, RefreshCw, BarChart3, CheckCircle, AlertTriangle, Wifi, Cpu } from 'lucide-react';
 
 /**
  * Barra de progreso horizontal con color condicional.
@@ -59,7 +59,13 @@ const MetricasTransmision = ({ metricas }) => {
     );
   }
 
-  const { pdr, rssi, reconexiones, msg_tx, ventana_horas } = metricas;
+  const { pdr, rssi, reconexiones, msg_tx, ventana_horas, ultimo_estado } = metricas;
+  const tasaRed = ultimo_estado?.red_intentos > 0
+    ? Math.round((ultimo_estado.red_exitos / ultimo_estado.red_intentos) * 100)
+    : null;
+  const tasaMqtt = ultimo_estado?.mqtt_intentos > 0
+    ? Math.round((ultimo_estado.mqtt_exitos / ultimo_estado.mqtt_intentos) * 100)
+    : null;
   const pdrCalif = calificarPDR(pdr?.porcentaje);
   const rssiCalif = calificarRSSI(rssi?.stats?.avg_dbm);
 
@@ -148,6 +154,58 @@ const MetricasTransmision = ({ metricas }) => {
           )}
         </div>
       </div>
+
+      {/* ── Confiabilidad de conexión ──────────────────────────────── */}
+      {ultimo_estado && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 mb-1">
+            <Wifi className="w-4 h-4 text-indigo-500" />
+            <span className="text-sm font-semibold text-gray-700">Confiabilidad de conexión</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <ConfiabilidadItem
+              label="Red celular"
+              intentos={ultimo_estado.red_intentos}
+              exitos={ultimo_estado.red_exitos}
+              tasa={tasaRed}
+            />
+            <ConfiabilidadItem
+              label="Sesiones MQTT"
+              intentos={ultimo_estado.mqtt_intentos}
+              exitos={ultimo_estado.mqtt_exitos}
+              tasa={tasaMqtt}
+            />
+          </div>
+          {(ultimo_estado.ade_perdidas != null || ultimo_estado.ade_rec != null) && (
+            <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-3 mt-1">
+              <Cpu className="w-4 h-4 text-gray-400" />
+              <span className="text-xs text-gray-500">ADE9153A — pérdidas:</span>
+              <span className="text-sm font-bold text-gray-700">
+                {ultimo_estado.ade_perdidas ?? '—'}
+              </span>
+              <span className="text-xs text-gray-400 ml-2">recuperaciones:</span>
+              <span className="text-sm font-bold text-gray-700">
+                {ultimo_estado.ade_rec ?? '—'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ConfiabilidadItem = ({ label, intentos, exitos, tasa }) => {
+  const color = tasa === null ? 'gray' : tasa >= 90 ? 'green' : tasa >= 70 ? 'yellow' : 'red';
+  return (
+    <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+      <p className="text-xs font-semibold text-gray-500">{label}</p>
+      <p className={`text-xl font-bold text-${color}-600`}>
+        {tasa !== null ? `${tasa}%` : 'N/A'}
+      </p>
+      <p className="text-xs text-gray-400">
+        {exitos ?? '—'} / {intentos ?? '—'} intentos
+      </p>
     </div>
   );
 };

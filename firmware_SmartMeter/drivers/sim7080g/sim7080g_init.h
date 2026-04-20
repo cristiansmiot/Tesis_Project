@@ -107,6 +107,17 @@ void sim7080g_mark_modem_unready(void);
 const char *sim7080g_get_apn(void);
 
 /**
+ * @brief Lee el IMEI del SIM7080G via AT+GSN y lo almacena internamente.
+ * @return ESP_OK si se obtuvo un IMEI de 15 dígitos.
+ */
+esp_err_t sim7080g_read_imei(void);
+
+/**
+ * @brief Retorna el IMEI leído (cadena vacía si aún no se leyó).
+ */
+const char *sim7080g_get_imei(void);
+
+/**
  * @brief Solicita fecha/hora de la red via AT+CCLK? y la almacena internamente.
  * @return ESP_OK si se obtuvo hora valida.
  */

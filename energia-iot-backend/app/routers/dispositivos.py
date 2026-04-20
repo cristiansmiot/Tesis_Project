@@ -184,4 +184,5 @@ def obtener_salud(device_id: str, db: Session = Depends(get_db)):
         "mqtt_intentos": registro.mqtt_intentos,
         "mqtt_exitos":   registro.mqtt_exitos,
         "fw_version":    registro.fw_version,
+        "imei":          registro.imei,
     }

@@ -7,6 +7,7 @@
 #include "meter_data.h"
 #include "node_health.h"    // node_health_get_rssi_dbm(), get_msg_tx(), get_reconnects()
 #include "pq_monitor.h"     // PQ_FLAG_SAG, PQ_FLAG_SWELL, PQ_FLAG_FREQ_OOR, PQ_FLAG_OVERTEMP
+#include "sim7080g_init.h"  // sim7080g_get_imei()
 #include "logger.h"
 
 static const char *TAG = "data_serializer";
@@ -218,6 +219,7 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
         "{\"n\":\"mqtt_ok_cnt\",\"u\":\"count\",\"v\":%lu},"
         "{\"n\":\"cal_ok\",\"vb\":%s},"
         "{\"n\":\"rssi_dbm\",\"u\":\"dBm\",\"v\":%d},"
+        "{\"n\":\"imei\",\"vs\":\"%s\"},"
         "{\"n\":\"fw\",\"vs\":\"" METER_FW_VERSION "\"}]",
         bt,
         ac_ok ? "true" : "false",
@@ -232,7 +234,8 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
         (unsigned long)mqtt_attempts,
         (unsigned long)mqtt_successes,
         cal_ok ? "true" : "false",
-        (int)rssi_dbm);
+        (int)rssi_dbm,
+        sim7080g_get_imei());
 
     if ((len <= 0) || ((size_t)len >= out_len)) {
         LOG_WARN(TAG, "SenML /estado truncado (len=%d out_len=%u)", len, (unsigned)out_len);

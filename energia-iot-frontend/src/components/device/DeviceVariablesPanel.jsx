@@ -9,7 +9,7 @@ import { evaluarVoltaje, evaluarFactorPotencia, evaluarFrecuencia } from '../../
  *
  * Props: medicion = ultima medicion, saludData = ultimo estado del nodo
  */
-const DeviceVariablesPanel = ({ medicion, saludData }) => {
+const DeviceVariablesPanel = ({ medicion, saludData, reconciliacion }) => {
   // ac_ok puede ser true/false/null; null = aún no se conoce → no restringir alertas
   const acPresente = saludData?.ac_ok ?? null;
   const voltajeStatus = evaluarVoltaje(medicion?.voltaje_rms, acPresente);
@@ -110,6 +110,12 @@ const DeviceVariablesPanel = ({ medicion, saludData }) => {
                 <p className="text-xs text-gray-500">Firmware</p>
                 <p className="text-lg font-bold text-gray-800">{saludData.fw_version ?? 'N/A'}</p>
               </div>
+              {saludData.imei && (
+                <div className="border border-gray-100 rounded-lg p-3 col-span-2 md:col-span-3">
+                  <p className="text-xs text-gray-500">IMEI (SIM7080G)</p>
+                  <p className="text-sm font-mono font-bold text-gray-800">{saludData.imei}</p>
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -118,6 +124,55 @@ const DeviceVariablesPanel = ({ medicion, saludData }) => {
           </p>
         )}
       </div>
+
+      {/* Reconciliación de energía */}
+      {reconciliacion && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h4 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-purple-500" />
+            Reconciliacion de energia
+          </h4>
+          {reconciliacion.reset_detectado ? (
+            <p className="text-sm text-amber-600">⚠ Reset de firmware detectado — referencia no disponible</p>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Dispositivo (NVS)</p>
+                <p className="text-xl font-bold text-gray-900">
+                  {reconciliacion.energia_dispositivo_wh?.toFixed(3) ?? '—'}
+                </p>
+                <p className="text-xs text-gray-400">Wh</p>
+              </div>
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Plataforma (∑P·Δt)</p>
+                <p className="text-xl font-bold text-gray-900">
+                  {reconciliacion.energia_plataforma_wh?.toFixed(3) ?? '—'}
+                </p>
+                <p className="text-xs text-gray-400">Wh</p>
+              </div>
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Discrepancia</p>
+                <p className={`text-xl font-bold ${
+                  (reconciliacion.discrepancia_pct ?? 0) > 5 ? 'text-red-600' :
+                  (reconciliacion.discrepancia_pct ?? 0) > 2 ? 'text-yellow-600' : 'text-green-600'
+                }`}>
+                  {reconciliacion.discrepancia_pct != null ? `${reconciliacion.discrepancia_pct}%` : '—'}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {reconciliacion.discrepancia_wh != null
+                    ? `${reconciliacion.discrepancia_wh > 0 ? '+' : ''}${reconciliacion.discrepancia_wh?.toFixed(3)} Wh`
+                    : ''}
+                </p>
+              </div>
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Mediciones</p>
+                <p className="text-xl font-bold text-gray-900">{reconciliacion.total_mediciones}</p>
+                <p className="text-xs text-gray-400">en {reconciliacion.ventana_horas}h</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Info de ultima medicion */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">

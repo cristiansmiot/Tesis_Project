@@ -1,9 +1,9 @@
 """ROUTER: Mediciones - CRUD de mediciones de energía"""
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, asc
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.database import get_db
 from app.models.dispositivo import Dispositivo
@@ -97,3 +97,80 @@ def obtener_historico(device_id: str, horas: int = 24, limite: int = 500, db: Se
                       "potencia_maxima": round(stats.p_max or 0, 2)},
         mediciones=mediciones
     )
+
+
+@router.get("/{device_id}/reconciliacion")
+def obtener_reconciliacion(
+    device_id: str,
+    horas: int = Query(default=24, ge=1, le=168, description="Ventana de tiempo (1-168h)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Reconciliación de energía: compara la energía acumulada reportada por
+    el dispositivo (energia_activa, valor del NVS del firmware) contra
+    la integral de potencia calculada por la plataforma (∑ P·Δt).
+
+    Devuelve el delta en Wh y el porcentaje de discrepancia para detectar
+    pérdidas de paquetes, errores de integración o desvíos de calibración.
+    """
+    device_id = device_id.strip().upper()
+    desde = datetime.now(timezone.utc) - timedelta(hours=horas)
+
+    mediciones = (
+        db.query(Medicion)
+        .filter(Medicion.device_id == device_id, Medicion.timestamp >= desde)
+        .order_by(asc(Medicion.timestamp))
+        .all()
+    )
+
+    if len(mediciones) < 2:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Se necesitan al menos 2 mediciones para '{device_id}' en las últimas {horas}h",
+        )
+
+    primera = mediciones[0]
+    ultima = mediciones[-1]
+
+    # Energía según el dispositivo (NVS counter acumulado): diferencia entre
+    # la primera y la última medición de la ventana. Si el contador cayó
+    # (reinicio del firmware) se detecta y se reporta como reset_detectado.
+    e_disp_inicio = primera.energia_activa or 0.0
+    e_disp_fin = ultima.energia_activa or 0.0
+    reset_detectado = e_disp_fin < e_disp_inicio
+    energia_dispositivo_wh = (e_disp_fin - e_disp_inicio) if not reset_detectado else None
+
+    # Integral de potencia: ∑ P(t) × Δt (regla del rectángulo izquierdo)
+    energia_plataforma_wh = 0.0
+    for i in range(1, len(mediciones)):
+        t1 = mediciones[i - 1].timestamp
+        t2 = mediciones[i].timestamp
+        p_w = mediciones[i - 1].potencia_activa or 0.0
+        dt_h = (t2 - t1).total_seconds() / 3600.0
+        energia_plataforma_wh += p_w * dt_h
+
+    energia_plataforma_wh = round(energia_plataforma_wh, 4)
+
+    discrepancia_wh = None
+    discrepancia_pct = None
+    if energia_dispositivo_wh is not None and energia_dispositivo_wh > 0:
+        discrepancia_wh = round(energia_dispositivo_wh - energia_plataforma_wh, 4)
+        discrepancia_pct = round(abs(discrepancia_wh) / energia_dispositivo_wh * 100, 2)
+
+    return {
+        "device_id": device_id,
+        "ventana_horas": horas,
+        "total_mediciones": len(mediciones),
+        "periodo_inicio": primera.timestamp,
+        "periodo_fin": ultima.timestamp,
+        "energia_dispositivo_wh": round(energia_dispositivo_wh, 4) if energia_dispositivo_wh is not None else None,
+        "energia_plataforma_wh": energia_plataforma_wh,
+        "discrepancia_wh": discrepancia_wh,
+        "discrepancia_pct": discrepancia_pct,
+        "reset_detectado": reset_detectado,
+        "nota": (
+            "Reset de firmware detectado en la ventana — energía dispositivo no disponible"
+            if reset_detectado else
+            f"Intervalo promedio: {round((ultima.timestamp - primera.timestamp).total_seconds() / max(len(mediciones)-1,1), 1)}s"
+        ),
+    }

@@ -171,6 +171,10 @@ export const medicionesAPI = {
   historico: async (deviceId, horas = 24) => {
     return fetchAPI(`${API_BASE_URL}/mediciones/${deviceId}/historico?horas=${horas}`);
   },
+
+  reconciliacion: async (deviceId, horas = 24) => {
+    return fetchAPI(`${API_BASE_URL}/mediciones/${deviceId}/reconciliacion?horas=${horas}`);
+  },
 };
 
 /**

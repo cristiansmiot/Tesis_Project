@@ -124,6 +124,7 @@ def obtener_metricas(
         "mqtt_intentos": ultimo.mqtt_intentos,
         "mqtt_exitos": ultimo.mqtt_exitos,
         "fw_version": ultimo.fw_version,
+        "imei":       ultimo.imei,
     }
 
     return {

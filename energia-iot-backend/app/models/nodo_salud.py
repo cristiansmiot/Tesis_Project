@@ -36,8 +36,9 @@ class NodoSalud(Base):
     mqtt_intentos   = Column(Integer, nullable=True)  # Intentos de sesión MQTT
     mqtt_exitos     = Column(Integer, nullable=True)  # Sesiones MQTT exitosas (=msg_tx en modelo nuevo)
 
-    # ── Identificación de firmware ─────────────────────────────────────────
+    # ── Identificación de firmware y hardware ─────────────────────────────
     fw_version = Column(String(20), nullable=True)
+    imei       = Column(String(20), nullable=True)  # IMEI del SIM7080G (UID único del hardware)
 
     # ── Timestamps ────────────────────────────────────────────────────────
     timestamp  = Column(DateTime(timezone=True), nullable=False, index=True)

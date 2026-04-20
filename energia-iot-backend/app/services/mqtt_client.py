@@ -497,6 +497,7 @@ class MQTTClient:
                 mqtt_exitos   = _int_any("mqtt_ok_cnt", "mqtt_exitos", "msg_tx")
 
                 rssi_dbm = _float_any("rssi_dbm", "rssi")
+                imei     = _str_any("imei")
 
                 nodo_salud = NodoSalud(
                     device_id=device_id,
@@ -519,6 +520,7 @@ class MQTTClient:
                     mqtt_intentos=mqtt_intentos,
                     mqtt_exitos=mqtt_exitos,
                     fw_version=fw_version,
+                    imei=imei,
                     timestamp=datetime.now(timezone.utc),
                 )
 

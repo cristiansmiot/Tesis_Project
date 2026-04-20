@@ -15,6 +15,7 @@ static uint8_t s_state;
 static uint32_t s_detected_baudrate;
 static uint8_t s_health_fail_streak;
 static char s_runtime_apn[64];
+static char s_imei[20];        // 15 dígitos IMEI + '\0', leído con AT+GSN
 static const uint32_t k_probe_at_timeout_ms = 1500U;
 static const uint32_t k_network_query_timeout_ms = 1500U;
 static const uint32_t k_runtime_query_timeout_ms = 1000U;
@@ -695,6 +696,11 @@ esp_err_t sim7080g_activate_pdp(void)
         return err;
     }
 
+    // Lee IMEI la primera vez que se activa el PDP (s_imei vacío).
+    if (s_imei[0] == '\0') {
+        (void)sim7080g_read_imei();
+    }
+
     s_state = (uint8_t)(s_state | SIM7080G_STATE_PDP_READY);
     s_state = (uint8_t)(s_state & ((uint8_t)~SIM7080G_STATE_ERROR));
     return ESP_OK;
@@ -830,6 +836,39 @@ const char *sim7080g_get_apn(void)
 }
 
 static char s_network_time[20];
+
+esp_err_t sim7080g_read_imei(void)
+{
+    if (!sim7080g_hal_is_ready()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char resp[64] = {0};
+    esp_err_t err = sim7080g_hal_send_cmd("AT+GSN", NULL, resp, sizeof(resp),
+                                          METER_SIM7080G_AT_TIMEOUT_MS, 1U);
+    if (err != ESP_OK) {
+        return err;
+    }
+    // Response: "\n123456789012345\r\nOK" — extract first 15-digit sequence
+    const char *p = resp;
+    while (*p && (*p < '0' || *p > '9')) { ++p; }  // skip non-digits
+    size_t i = 0U;
+    while (*p >= '0' && *p <= '9' && i < sizeof(s_imei) - 1U) {
+        s_imei[i++] = *p++;
+    }
+    s_imei[i] = '\0';
+    if (i < 14U) {
+        LOG_WARN(TAG, "IMEI parse short: '%s'", s_imei);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    LOG_INFO(TAG, "IMEI: %s", s_imei);
+    return ESP_OK;
+}
+
+const char *sim7080g_get_imei(void)
+{
+    return s_imei;
+}
 
 esp_err_t sim7080g_sync_network_time(void)
 {

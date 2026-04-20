@@ -52,6 +52,7 @@ const MedidorDetalle = () => {
   const [estadisticas, setEstadisticas] = useState(null);
   const [saludData, setSaludData] = useState(null);
   const [metricasTransmision, setMetricasTransmision] = useState(null);
+  const [reconciliacion, setReconciliacion] = useState(null);
   const [eventosDevice, setEventosDevice] = useState([]);
   const [eventosActivos, setEventosActivos] = useState(0);
   const [cargando, setCargando] = useState(true);
@@ -77,6 +78,7 @@ const MedidorDetalle = () => {
         dispositivosAPI.salud(deviceId),
         saludAPI.metricas(deviceId, 24),
         eventosAPI.listar({ device_id: deviceId, limit: 20 }),
+        medicionesAPI.reconciliacion(deviceId, 24),
       ]);
 
       if (resultados[0].status === 'fulfilled') setDispositivo(resultados[0].value);
@@ -92,6 +94,7 @@ const MedidorDetalle = () => {
         setEventosDevice(evts);
         setEventosActivos(evts.filter((e) => e.activo).length);
       }
+      if (resultados[6].status === 'fulfilled') setReconciliacion(resultados[6].value);
     } catch (err) {
       console.error('Error cargando detalle:', err);
     } finally {
@@ -227,7 +230,7 @@ const MedidorDetalle = () => {
       {activeTab === 'variables' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
-            <DeviceVariablesPanel medicion={medicion} saludData={saludData} />
+            <DeviceVariablesPanel medicion={medicion} saludData={saludData} reconciliacion={reconciliacion} />
           </div>
           <div className="space-y-6">
             <MetricasTransmision metricas={metricasTransmision} />

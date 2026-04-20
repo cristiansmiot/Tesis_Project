@@ -45,13 +45,13 @@ static const uint8_t k_health_fail_force_reprobe = 1U;
 #define AT_CGNAPN_QUERY     "AT+CGNAPN"
 #define AT_CPSI_QUERY       "AT+CPSI?"
 #define AT_CEER_QUERY       "AT+CEER"
+#define AT_IPR_FMT          "AT+IPR=%lu"
 
 static const uint32_t k_sim7080g_baud_candidates[] = {
     SIM7080G_BAUD_RATE,
 #if (METER_SIM7080G_BAUD_AUTOPROBE != 0)
     115200U,
     9600U,
-    57600U,
     38400U,
     19200U
 #endif
@@ -517,6 +517,29 @@ esp_err_t sim7080g_init(void)
         return err;
     }
     s_health_fail_streak = 0U;
+
+    // Si el modem respondio en un baud distinto al configurado, persistirlo
+    // con AT+IPR para que el siguiente arranque lo encuentre inmediatamente.
+    if (s_detected_baudrate != (uint32_t)SIM7080G_BAUD_RATE) {
+        char ipr_cmd[32];
+        (void)snprintf(ipr_cmd, sizeof(ipr_cmd), AT_IPR_FMT, (unsigned long)SIM7080G_BAUD_RATE);
+        (void)sim7080g_hal_send_cmd(ipr_cmd, NULL, NULL, 0U, METER_SIM7080G_AT_TIMEOUT_MS, 1U);
+        // AT&W guarda la configuracion en NVRAM del SIM7080G
+        (void)sim7080g_hal_send_cmd("AT&W", NULL, NULL, 0U, METER_SIM7080G_AT_TIMEOUT_MS, 1U);
+        // Reconfigura la HAL al baud objetivo para el resto de la sesion
+        {
+            const sim7080g_hal_config_t new_cfg = {
+                .uart_num = SIM7080G_UART_NUM,
+                .tx_pin   = SIM7080G_UART_TX,
+                .rx_pin   = SIM7080G_UART_RX,
+                .baudrate = (uint32_t)SIM7080G_BAUD_RATE,
+            };
+            if (sim7080g_hal_init(&new_cfg) == ESP_OK) {
+                s_detected_baudrate = (uint32_t)SIM7080G_BAUD_RATE;
+                LOG_INFO(TAG, "baud persistido y HAL reconfigurada a %lu", (unsigned long)SIM7080G_BAUD_RATE);
+            }
+        }
+    }
 
     err = sim7080g_hal_send_cmd(AT_ECHO_OFF,
                                 NULL,

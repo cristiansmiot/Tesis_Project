@@ -20,26 +20,32 @@ router = APIRouter(prefix="/dispositivos", tags=["Comandos"])
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
+# Payload = string plano que el firmware compara con strcmp().
+# Topic: medidor/{device_id}/cmd  (firmware suscribe con sufijo "cmd")
 COMANDOS_VALIDOS = {
     "reiniciar": {
         "descripcion": "Reinicia el microcontrolador ESP32",
-        "payload": {"cmd": "reboot"},
+        "payload": "reset",
     },
     "corte_suministro": {
         "descripcion": "Abre el relé de corte de energía",
-        "payload": {"cmd": "relay_off"},
+        "payload": "relay_off",
     },
     "restaurar_suministro": {
         "descripcion": "Cierra el relé para restaurar energía",
-        "payload": {"cmd": "relay_on"},
+        "payload": "relay_on",
     },
     "sincronizar_hora": {
         "descripcion": "Sincroniza el reloj del dispositivo con el servidor",
-        "payload": {"cmd": "sync_time"},
+        "payload": "sync_time",
     },
     "solicitar_estado": {
         "descripcion": "Solicita que el dispositivo envíe su estado actual",
-        "payload": {"cmd": "status"},
+        "payload": "status",
+    },
+    "calibrar": {
+        "descripcion": "Inicia calibración mSure en el ADE9153A",
+        "payload": "calibrate",
     },
 }
 
@@ -108,16 +114,14 @@ def enviar_comando(
             detail="Cliente MQTT no disponible. No se puede enviar el comando.",
         )
 
-    # Construir payload
+    # Construir payload (string plano que el firmware compara con strcmp)
     comando_info = COMANDOS_VALIDOS[datos.comando]
-    payload = {**comando_info["payload"]}
-    if datos.parametros:
-        payload.update(datos.parametros)
+    payload_str: str = comando_info["payload"]
 
-    # Publicar en MQTT
-    topic = f"medidor/{device_id}/comando"
+    # Publicar en MQTT — topic con sufijo "cmd" según firmware
+    topic = f"medidor/{device_id}/cmd"
     try:
-        result = mqtt.client.publish(topic, json.dumps(payload), qos=1)
+        result = mqtt.client.publish(topic, payload_str, qos=1)
         if result.rc != 0:
             raise Exception(f"MQTT publish failed with rc={result.rc}")
     except Exception as e:
@@ -131,7 +135,7 @@ def enviar_comando(
     registrar_accion(
         db, accion="comando_enviado", usuario_email=usuario.email,
         recurso="dispositivo", recurso_id=device_id,
-        detalles={"comando": datos.comando, "payload": payload},
+        detalles={"comando": datos.comando, "payload": payload_str},
         ip_address=request.client.host if request.client else None,
     )
 

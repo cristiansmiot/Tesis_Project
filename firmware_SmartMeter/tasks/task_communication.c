@@ -18,10 +18,11 @@
 static const char *TAG = "task_communication";
 static TaskHandle_t s_task_handle;
 static bool s_subscribed;
+static volatile bool s_force_estado; // set by "status" cmd → publica /estado inmediato
 
 /**
  * @brief Procesa comando recibido via MQTT desde el dashboard.
- * Comandos soportados: "calibrate", "probe", "reset".
+ * Comandos: reset, calibrate, probe, status, relay_off, relay_on, sync_time.
  */
 static void task_communication_process_cmd(const char *cmd)
 {
@@ -50,6 +51,18 @@ static void task_communication_process_cmd(const char *cmd)
         LOG_WARN(TAG, "remote reset requested - restarting ESP32");
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
+    } else if (strcmp(cmd, "status") == 0) {
+        s_force_estado = true;
+        LOG_INFO(TAG, "status cmd: /estado will be published immediately");
+    } else if (strcmp(cmd, "relay_off") == 0) {
+        // TODO: abrir GPIO del rele de corte cuando el hardware este cableado
+        LOG_WARN(TAG, "relay_off: GPIO relay not wired yet");
+    } else if (strcmp(cmd, "relay_on") == 0) {
+        // TODO: cerrar GPIO del rele de suministro cuando el hardware este cableado
+        LOG_WARN(TAG, "relay_on: GPIO relay not wired yet");
+    } else if (strcmp(cmd, "sync_time") == 0) {
+        // TODO: sincronizar RTC via SNTP cuando se integre el modulo de tiempo
+        LOG_INFO(TAG, "sync_time: NTP sync not yet implemented");
     } else {
         LOG_WARN(TAG, "unknown remote cmd: %s", cmd);
     }
@@ -222,9 +235,12 @@ static void task_communication(void *pvParameters)
         // ?????? /estado: salud del nodo cada METER_COMM_ESTADO_PERIOD_MS ????????????????????????
         // retain=1 / QoS=1: el broker retiene el ultimo estado para que
         // el backend conozca la situacion del nodo sin esperar el ciclo.
+        // s_force_estado=true cuando llega cmd "status" para publicacion inmediata.
         {
             const TickType_t now_tick = xTaskGetTickCount();
-            if ((now_tick - last_estado_tick) >= pdMS_TO_TICKS(METER_COMM_ESTADO_PERIOD_MS)) {
+            const bool force = s_force_estado;
+            if (force) { s_force_estado = false; }
+            if (force || (now_tick - last_estado_tick) >= pdMS_TO_TICKS(METER_COMM_ESTADO_PERIOD_MS)) {
                 const uint8_t cal_st = task_calibration_get_status();
                 const bool cal_ok =
                     ((cal_st & CALIB_STATUS_VALID)     != 0U) &&

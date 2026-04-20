@@ -400,27 +400,26 @@ class MQTTClient:
         """
         Procesa un mensaje del topic /estado (salud del nodo).
 
-        Soporta campos SenML RFC 8428 (activo) y JSON plano (legacy):
+        Mapeo SenML RFC 8428 del firmware -> columnas NodoSalud:
 
-        SenML /estado parseado:
-            online       (bool)  → dispositivo.conectado
-            ac_ok        (bool)  → presencia de linea AC
-            carga        (bool)  → carga detectada en el circuito
-            ade_ok       (bool)  → ADE9153A respondiendo correctamente
-            ade_bus      (bool)  → estado del bus SPI con el ADE
-            ade_rec      (int)   → contador de recuperaciones del ADE
-            modem_ok     (bool)  → SIM7080G responde AT
-            mqtt_ok      (bool)  → sesion MQTT activa en el nodo
-            cal_ok       (bool)  → calibracion mSure valida y cargada
-            rssi_dbm     (float) → señal celular en dBm (Phase 2)
-            msg_tx       (int)   → mensajes /datos publicados (Phase 2)
-            reconexiones (int)   → sesiones MQTT establecidas (Phase 2)
-            fw           (str)   → version de firmware instalada
+            online       (vb)    -> online
+            ac           (vb)    -> ac_ok
+            carga        (vb)    -> carga
+            ade          (vb)    -> ade_ok
+            red_cel      (vb)    -> modem_ok
+            mqtt         (vb)    -> mqtt_ok
+            cal_ok       (vb)    -> cal_ok
+            ade_perd     (v)     -> ade_perdidas
+            ade_rec_ok   (v)     -> ade_rec         (recuperaciones exitosas)
+            red_int      (v)     -> red_intentos
+            red_ok       (v)     -> red_exitos      (=reconexiones)
+            mqtt_int     (v)     -> mqtt_intentos
+            mqtt_ok_cnt  (v)     -> mqtt_exitos     (=msg_tx)
+            rssi_dbm     (v)     -> rssi_dbm
+            fw           (vs)    -> fw_version
 
-        Legacy JSON:
-            rssi      (int)   → señal celular en dBm
-            uptime    (int)   → segundos desde arranque
-            firmware  (str)   → version de firmware
+        Acepta nombres legacy (ac_ok, modem_ok, mqtt_ok, ade_ok, ade_rec,
+        msg_tx, reconexiones, firmware) para retrocompat. sin penalizar.
         """
         if not self._db_session_factory:
             return
@@ -444,48 +443,81 @@ class MQTTClient:
                 dispositivo.conectado = bool(online)
                 dispositivo.ultima_conexion = datetime.now(timezone.utc)
 
-                # Version de firmware: SenML "fw" tiene prioridad sobre legacy "firmware"
-                fw_version = None
-                if "fw" in data:
-                    fw_version = str(data["fw"])
+                # ── Helpers tolerantes ──────────────────────────────────────
+                def _bool_any(*keys):
+                    """Primer key con valor no-null, convertido a bool."""
+                    for k in keys:
+                        if k in data and data[k] is not None:
+                            return bool(data[k])
+                    return None
+
+                def _int_any(*keys):
+                    for k in keys:
+                        if k in data and data[k] is not None:
+                            try:
+                                return int(data[k])
+                            except (TypeError, ValueError):
+                                continue
+                    return None
+
+                def _float_any(*keys):
+                    for k in keys:
+                        if k in data and data[k] is not None:
+                            try:
+                                return float(data[k])
+                            except (TypeError, ValueError):
+                                continue
+                    return None
+
+                def _str_any(*keys):
+                    for k in keys:
+                        if k in data and data[k] is not None:
+                            return str(data[k])
+                    return None
+
+                # Firmware: "fw" (SenML). Legacy: "firmware".
+                fw_version = _str_any("fw", "firmware")
+                if fw_version:
                     dispositivo.firmware_version = fw_version
-                elif "firmware" in data:
-                    fw_version = str(data["firmware"])
-                    dispositivo.firmware_version = fw_version
 
-                # ── Guardar registro de salud del nodo ──────────────────────
-                def _to_bool(key):
-                    val = data.get(key)
-                    return bool(val) if val is not None else None
+                # Mapear SenML firmware -> columnas BD, con fallback legacy.
+                modem_ok    = _bool_any("red_cel", "modem_ok")
+                mqtt_ok_val = _bool_any("mqtt", "mqtt_ok")
+                ade_ok_val  = _bool_any("ade", "ade_ok")
+                ac_ok       = _bool_any("ac", "ac_ok")
+                carga       = _bool_any("carga")
+                cal_ok      = _bool_any("cal_ok")
+                ade_bus     = _bool_any("ade_bus")
 
-                def _to_int(key):
-                    val = data.get(key)
-                    try:
-                        return int(val) if val is not None else None
-                    except (TypeError, ValueError):
-                        return None
+                ade_perdidas  = _int_any("ade_perd", "ade_perdidas")
+                ade_rec       = _int_any("ade_rec_ok", "ade_rec")
+                red_intentos  = _int_any("red_int", "red_intentos")
+                red_exitos    = _int_any("red_ok", "red_exitos", "reconexiones")
+                mqtt_intentos = _int_any("mqtt_int", "mqtt_intentos")
+                mqtt_exitos   = _int_any("mqtt_ok_cnt", "mqtt_exitos", "msg_tx")
 
-                def _to_float(key):
-                    val = data.get(key)
-                    try:
-                        return float(val) if val is not None else None
-                    except (TypeError, ValueError):
-                        return None
+                rssi_dbm = _float_any("rssi_dbm", "rssi")
 
                 nodo_salud = NodoSalud(
                     device_id=device_id,
-                    online=_to_bool("online"),
-                    ac_ok=_to_bool("ac_ok"),
-                    carga=_to_bool("carga"),
-                    ade_ok=_to_bool("ade_ok"),
-                    ade_bus=_to_bool("ade_bus"),
-                    ade_rec=_to_int("ade_rec"),
-                    modem_ok=_to_bool("modem_ok"),
-                    mqtt_ok=_to_bool("mqtt_ok"),
-                    cal_ok=_to_bool("cal_ok"),
-                    rssi_dbm=_to_float("rssi_dbm") or _to_float("rssi"),
-                    msg_tx=_to_int("msg_tx"),
-                    reconexiones=_to_int("reconexiones"),
+                    online=bool(online),
+                    ac_ok=ac_ok,
+                    carga=carga,
+                    ade_ok=ade_ok_val,
+                    ade_bus=ade_bus,
+                    ade_rec=ade_rec,
+                    modem_ok=modem_ok,
+                    mqtt_ok=mqtt_ok_val,
+                    cal_ok=cal_ok,
+                    rssi_dbm=rssi_dbm,
+                    # Compatibilidad: msg_tx = mqtt_exitos, reconexiones = red_exitos.
+                    msg_tx=mqtt_exitos,
+                    reconexiones=red_exitos,
+                    ade_perdidas=ade_perdidas,
+                    red_intentos=red_intentos,
+                    red_exitos=red_exitos,
+                    mqtt_intentos=mqtt_intentos,
+                    mqtt_exitos=mqtt_exitos,
                     fw_version=fw_version,
                     timestamp=datetime.now(timezone.utc),
                 )
@@ -493,15 +525,11 @@ class MQTTClient:
                 db.add(nodo_salud)
                 db.commit()
 
-                rssi = data.get("rssi_dbm", data.get("rssi", "N/A"))
-                ade_ok = data.get("ade_ok", "N/A")
-                cal_ok = data.get("cal_ok", "N/A")
-                ac_ok = data.get("ac_ok", "N/A")
-                msg_tx = data.get("msg_tx", "N/A")
                 logger.info(
                     f"📊 /estado {device_id} | "
-                    f"online={online} ac={ac_ok} ade={ade_ok} "
-                    f"cal={cal_ok} rssi={rssi} msg_tx={msg_tx}"
+                    f"ac={ac_ok} carga={carga} ade={ade_ok_val} "
+                    f"modem={modem_ok} mqtt={mqtt_ok_val} cal={cal_ok} "
+                    f"rssi={rssi_dbm} pkt_ok={mqtt_exitos} recon={red_exitos}"
                 )
 
             finally:

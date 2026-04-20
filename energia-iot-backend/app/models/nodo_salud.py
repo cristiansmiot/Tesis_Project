@@ -24,10 +24,17 @@ class NodoSalud(Base):
     mqtt_ok   = Column(Boolean, nullable=True)   # Sesión MQTT activa en el nodo
     cal_ok    = Column(Boolean, nullable=True)   # Calibración mSure válida y cargada
 
-    # ── Métricas de transmisión (Phase 2) ─────────────────────────────────
+    # ── Métricas de transmisión ───────────────────────────────────────────
     rssi_dbm      = Column(Float,   nullable=True)  # Señal celular (dBm), -127 = N/A
-    msg_tx        = Column(Integer, nullable=True)  # Mensajes /datos publicados desde arranque
-    reconexiones  = Column(Integer, nullable=True)  # Sesiones MQTT establecidas desde arranque
+    msg_tx        = Column(Integer, nullable=True)  # Mensajes /datos publicados (=mqtt_exitos)
+    reconexiones  = Column(Integer, nullable=True)  # Sesiones MQTT establecidas (=red_exitos)
+
+    # ── Contadores de confiabilidad (desde arranque del firmware) ─────────
+    ade_perdidas    = Column(Integer, nullable=True)  # Veces que el ADE perdió comunicación
+    red_intentos    = Column(Integer, nullable=True)  # Intentos de conexión celular
+    red_exitos      = Column(Integer, nullable=True)  # Conexiones celulares exitosas
+    mqtt_intentos   = Column(Integer, nullable=True)  # Intentos de sesión MQTT
+    mqtt_exitos     = Column(Integer, nullable=True)  # Sesiones MQTT exitosas (=msg_tx en modelo nuevo)
 
     # ── Identificación de firmware ─────────────────────────────────────────
     fw_version = Column(String(20), nullable=True)

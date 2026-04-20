@@ -188,6 +188,10 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
         (void)node_health_get_rssi_dbm(&rssi_dbm);
     }
 
+    // Estado electrico derivado del snapshot.
+    const bool ac_ok = (snap->ac_present != 0U);
+    const bool carga = ac_ok && ((double)snap->irms_a > (double)METER_NO_LOAD_IRMS_A_MAX_A);
+
     const uint32_t ade_losses = node_health_get_ade_losses();
     const uint32_t ade_recovery_successes = node_health_get_ade_recovery_successes();
     const uint32_t cellular_attempts = node_health_get_cellular_attempts();
@@ -195,13 +199,14 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
     const uint32_t mqtt_attempts = node_health_get_mqtt_attempts();
     const uint32_t mqtt_successes = node_health_get_mqtt_successes();
     // bt=0: backend asigna timestamp UTC al recibir (ver /datos).
-    (void)snap;
     const double bt = 0.0;
 
     const int len = snprintf(
         out, out_len,
         "[{\"bn\":\"urn:dev:serial:" METER_MQTT_CLIENT_ID ":/\",\"bt\":%.3f},"
         "{\"n\":\"online\",\"vb\":true},"
+        "{\"n\":\"ac\",\"vb\":%s},"
+        "{\"n\":\"carga\",\"vb\":%s},"
         "{\"n\":\"red_cel\",\"vb\":%s},"
         "{\"n\":\"mqtt\",\"vb\":%s},"
         "{\"n\":\"ade\",\"vb\":%s},"
@@ -215,6 +220,8 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
         "{\"n\":\"rssi_dbm\",\"u\":\"dBm\",\"v\":%d},"
         "{\"n\":\"fw\",\"vs\":\"" METER_FW_VERSION "\"}]",
         bt,
+        ac_ok ? "true" : "false",
+        carga ? "true" : "false",
         cellular_ok ? "true" : "false",
         mqtt_ok ? "true" : "false",
         ade_ok ? "true" : "false",

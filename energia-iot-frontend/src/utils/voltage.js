@@ -11,12 +11,16 @@ const TOLERANCIA_PCT = 10;
 export const VOLTAJE_MIN = VOLTAJE_NOMINAL * (1 - TOLERANCIA_PCT / 100); // 108V
 export const VOLTAJE_MAX = VOLTAJE_NOMINAL * (1 + TOLERANCIA_PCT / 100); // 132V
 
+const SIN_AC = { estado: 'sin_ac', color: 'gray', label: 'Sin AC' };
+
 /**
- * Evalúa el estado de un voltaje según CREG 024/2015
+ * Evalúa el estado de un voltaje según CREG 024/2015.
  * @param {number} voltaje - Voltaje RMS medido
+ * @param {boolean|null} acPresente - Presencia de línea AC (saludData.ac_ok)
  * @returns {{ estado: string, color: string, label: string }}
  */
-export function evaluarVoltaje(voltaje) {
+export function evaluarVoltaje(voltaje, acPresente = null) {
+  if (acPresente === false) return SIN_AC;
   if (voltaje == null || isNaN(voltaje)) {
     return { estado: 'desconocido', color: 'gray', label: 'Sin dato' };
   }
@@ -42,9 +46,12 @@ export function evaluarConectividad(rssi) {
 }
 
 /**
- * Evalúa el factor de potencia
+ * Evalúa el factor de potencia.
+ * @param {number} fp
+ * @param {boolean|null} acPresente
  */
-export function evaluarFactorPotencia(fp) {
+export function evaluarFactorPotencia(fp, acPresente = null) {
+  if (acPresente === false) return SIN_AC;
   if (fp == null || isNaN(fp)) return { estado: 'desconocido', color: 'gray', label: 'Sin dato' };
   if (fp >= 0.9) return { estado: 'normal', color: 'green', label: 'Normal' };
   if (fp >= 0.8) return { estado: 'bajo', color: 'yellow', label: 'Bajo' };
@@ -52,9 +59,12 @@ export function evaluarFactorPotencia(fp) {
 }
 
 /**
- * Evalúa frecuencia (nominal 60Hz en Colombia)
+ * Evalúa frecuencia (nominal 60Hz en Colombia).
+ * @param {number} freq
+ * @param {boolean|null} acPresente
  */
-export function evaluarFrecuencia(freq) {
+export function evaluarFrecuencia(freq, acPresente = null) {
+  if (acPresente === false) return SIN_AC;
   if (freq == null || isNaN(freq)) return { estado: 'desconocido', color: 'gray', label: 'Sin dato' };
   if (freq >= 59.5 && freq <= 60.5) return { estado: 'normal', color: 'green', label: 'Normal' };
   return { estado: 'anormal', color: 'red', label: 'Fuera de rango' };

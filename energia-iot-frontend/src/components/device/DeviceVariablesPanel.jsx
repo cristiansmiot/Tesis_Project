@@ -10,9 +10,11 @@ import { evaluarVoltaje, evaluarFactorPotencia, evaluarFrecuencia } from '../../
  * Props: medicion = ultima medicion, saludData = ultimo estado del nodo
  */
 const DeviceVariablesPanel = ({ medicion, saludData }) => {
-  const voltajeStatus = evaluarVoltaje(medicion?.voltaje_rms);
-  const fpStatus = evaluarFactorPotencia(medicion?.factor_potencia);
-  const freqStatus = evaluarFrecuencia(medicion?.frecuencia);
+  // ac_ok puede ser true/false/null; null = aún no se conoce → no restringir alertas
+  const acPresente = saludData?.ac_ok ?? null;
+  const voltajeStatus = evaluarVoltaje(medicion?.voltaje_rms, acPresente);
+  const fpStatus = evaluarFactorPotencia(medicion?.factor_potencia, acPresente);
+  const freqStatus = evaluarFrecuencia(medicion?.frecuencia, acPresente);
 
   return (
     <div className="space-y-6">
@@ -81,23 +83,35 @@ const DeviceVariablesPanel = ({ medicion, saludData }) => {
           Estado del nodo ESP32
         </h4>
         {saludData ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <StatusItem label="Linea AC" activo={saludData.ac_ok} />
-            <StatusItem label="Carga detectada" activo={saludData.carga} />
-            <StatusItem label="ADE9153A" activo={saludData.ade_ok} descripcion="Sensor de energia" />
-            <StatusItem label="Bus SPI (ADE)" activo={saludData.ade_bus} />
-            <StatusItem label="Modem SIM7080G" activo={saludData.modem_ok} descripcion="Celular" />
-            <StatusItem label="Sesion MQTT" activo={saludData.mqtt_ok} />
-            <StatusItem label="Calibracion mSure" activo={saludData.cal_ok} />
-            <div className="border border-gray-100 rounded-lg p-3">
-              <p className="text-xs text-gray-500">Recuperaciones ADE</p>
-              <p className="text-lg font-bold text-gray-800">{saludData.ade_rec ?? 'N/A'}</p>
+          <>
+            {saludData.ac_ok === false && (
+              <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                <span className="font-semibold">⚠ Sin línea AC</span>
+                <span className="text-amber-600">— las métricas eléctricas no son aplicables.</span>
+              </div>
+            )}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <StatusItem label="Linea AC" activo={saludData.ac_ok} />
+              <StatusItem label="Carga detectada" activo={saludData.carga} />
+              <StatusItem label="ADE9153A" activo={saludData.ade_ok} descripcion="Sensor de energia" />
+              {/* ade_bus almacena bus_disconnected: false=OK, true=Error → invertir */}
+              <StatusItem
+                label="Bus SPI (ADE)"
+                activo={saludData.ade_bus != null ? !saludData.ade_bus : null}
+              />
+              <StatusItem label="Modem SIM7080G" activo={saludData.modem_ok} descripcion="Celular" />
+              <StatusItem label="Sesion MQTT" activo={saludData.mqtt_ok} />
+              <StatusItem label="Calibracion mSure" activo={saludData.cal_ok} />
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Recuperaciones ADE</p>
+                <p className="text-lg font-bold text-gray-800">{saludData.ade_rec ?? 'N/A'}</p>
+              </div>
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Firmware</p>
+                <p className="text-lg font-bold text-gray-800">{saludData.fw_version ?? 'N/A'}</p>
+              </div>
             </div>
-            <div className="border border-gray-100 rounded-lg p-3">
-              <p className="text-xs text-gray-500">Firmware</p>
-              <p className="text-lg font-bold text-gray-800">{saludData.fw_version ?? 'N/A'}</p>
-            </div>
-          </div>
+          </>
         ) : (
           <p className="text-sm text-gray-400">
             Sin datos de estado. El nodo aun no ha enviado un mensaje de /estado.

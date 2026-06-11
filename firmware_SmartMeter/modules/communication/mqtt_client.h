@@ -14,6 +14,8 @@
  */
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 /**
@@ -76,6 +78,13 @@ esp_err_t mqtt_client_subscribe(const char *topic);
  * @return ESP_OK si se recibio comando, ESP_ERR_NOT_FOUND si no hay.
  */
 esp_err_t mqtt_client_read_command(char *cmd_out, size_t cmd_len);
+
+/**
+ * @brief Duracion del ultimo establecimiento de sesion MQTT exitoso.
+ * Permite comparar el costo del handshake TLS vs. conexion en claro.
+ * @return Milisegundos del ultimo SMCONN exitoso (0 si aun no conecta).
+ */
+uint32_t mqtt_client_get_last_connect_ms(void);
 
 #endif // MQTT_CLIENT_H
 

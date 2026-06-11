@@ -53,6 +53,7 @@ class MQTTClient:
         topic_base: str = "medidor/#",
         client_id: str = "",
         use_tls: bool = False,
+        tls_ca_file: str = "",
     ):
         """
         Inicializa el cliente MQTT.
@@ -82,13 +83,19 @@ class MQTTClient:
         )
         self.client.username_pw_set(self.username, self.password)
 
-        # Habilitar TLS si es necesario (Railway proxy lo requiere)
+        # TLS: si se entrega la CA propia del proyecto se ancla (pinning) —
+        # necesaria porque el certificado del broker lo emite nuestra CA y
+        # no una CA pública. Sin ruta, se validan las CAs del sistema.
         if self.use_tls:
             self.client.tls_set(
+                ca_certs=tls_ca_file or None,
                 cert_reqs=ssl.CERT_REQUIRED,
                 tls_version=ssl.PROTOCOL_TLS_CLIENT,
             )
-            logger.info("🔒 TLS habilitado para conexión MQTT")
+            logger.info(
+                "🔒 TLS habilitado para conexión MQTT (CA %s)",
+                "propia anclada" if tls_ca_file else "del sistema",
+            )
 
         self.client.enable_logger(logger)
         self.client.reconnect_delay_set(min_delay=2, max_delay=30)
@@ -751,6 +758,7 @@ def create_mqtt_client(
     topic_base: str = "medidor/#",
     client_id: str = "",
     use_tls: bool = False,
+    tls_ca_file: str = "",
 ) -> MQTTClient:
     """Crea y retorna la instancia global del cliente MQTT."""
     global mqtt_client
@@ -762,6 +770,7 @@ def create_mqtt_client(
         topic_base=topic_base,
         client_id=client_id,
         use_tls=use_tls,
+        tls_ca_file=tls_ca_file,
     )
     return mqtt_client
 

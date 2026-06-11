@@ -181,6 +181,22 @@
 #define METER_MQTT_LWT_RETAIN                  1
 
 #define METER_MQTT_KEEPALIVE_S                 120U
+
+// ── TLS nodo→broker (AT+CSSLCFG / AT+SMSSL) ─────────────────────────────
+// 0 = MQTT en claro (solo usuario/contraseña). 1 = TLS 1.2 validando el
+// broker contra la CA propia embebida en config/mqtt_ca_cert.h.
+// Activar SOLO despues de desplegar los certificados en el broker
+// (mosquitto-config/TLS_DEPLOY.md) y apuntar METER_MQTT_PORT al listener
+// TLS; si no, SMCONN fallara el handshake en cada reconexion.
+#define METER_MQTT_USE_TLS                     0
+// Nombre del archivo CA dentro del FS del modem (directorio /customer/).
+#define METER_MQTT_TLS_CA_NAME                 "ca.crt"
+// Contexto SSL del modem usado para MQTT (0..5).
+#define METER_MQTT_TLS_CTX                     0U
+// 3 = TLS 1.2 en AT+CSSLCFG="SSLVERSION". El SIM7080G no soporta TLS 1.3.
+#define METER_MQTT_TLS_VERSION                 3U
+// Escritura del PEM al FS del modem (archivo ~2 KB por UART a 57600).
+#define METER_MQTT_TLS_FSWRITE_TIMEOUT_MS      10000U
 // SMCONN timing tunning:
 // El modem tipicamente completa la conexion TCP+MQTT en ~30-38 s (DNS celular
 // + TCP handshake + MQTT CONNECT/CONNACK). Con RETRIES=1 el HAL bloqueaba

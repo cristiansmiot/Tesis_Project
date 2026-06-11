@@ -3,9 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "meter_config.h"
+#if (METER_MQTT_USE_TLS != 0)
+#include "mqtt_ca_cert.h"
+#endif
 #include "node_health.h"
 #include "sim7080g_hal.h"
 #include "sim7080g_init.h"
@@ -16,6 +20,9 @@ static bool s_configured;
 static bool s_connected;
 static bool s_force_reconfigure;
 static bool s_skip_lwt_config;
+// Duracion del ultimo SMCONN exitoso, para comparar el overhead del
+// handshake TLS vs. conexion en claro (capitulo de ciberseguridad).
+static uint32_t s_last_connect_ms;
 static const uint32_t k_mqtt_state_timeout_ms = 1000U;
 static const uint32_t k_mqtt_diag_timeout_ms = 1000U;
 
@@ -36,6 +43,17 @@ static const uint32_t k_mqtt_diag_timeout_ms = 1000U;
 #define AT_SMCONF_RETAINWILL    "AT+SMCONF=\"RETAINWILL\",1"
 #define AT_SMCONN               "AT+SMCONN"
 #define AT_SMDISC               "AT+SMDISC"
+// TLS: archivo CA en el FS del modem y vinculo con la sesion MQTT.
+// CFSWFILE escribe en el indice 3 (/customer/), unico directorio que
+// AT+CSSLCFG="CONVERT" acepta como origen de certificados.
+#define AT_CFSINIT              "AT+CFSINIT"
+#define AT_CFSTERM              "AT+CFSTERM"
+#define AT_CFSWFILE_FMT         "AT+CFSWFILE=3,\"%s\",0,%u,%u"
+#define AT_CSSLCFG_VER_FMT      "AT+CSSLCFG=\"SSLVERSION\",%u,%u"
+#define AT_CSSLCFG_CONVERT_FMT  "AT+CSSLCFG=\"CONVERT\",2,\"%s\""
+#define AT_CSSLCFG_SNI_FMT      "AT+CSSLCFG=\"SNI\",%u,\"%s\""
+#define AT_SMSSL_ON_FMT         "AT+SMSSL=%u,\"%s\",\"\""
+#define AT_SMSSL_OFF            "AT+SMSSL=0"
 #define AT_SMSTATE_QUERY        "AT+SMSTATE?"
 #define AT_SMPUB_FMT            "AT+SMPUB=\"%s\",%d,%d,%d"
 #define AT_CEREG_QUERY          "AT+CEREG?"
@@ -211,6 +229,89 @@ static void mqtt_client_log_state(const char *prefix)
     }
 }
 
+#if (METER_MQTT_USE_TLS != 0)
+/**
+ * Sube la CA propia al filesystem del SIM7080G y configura el contexto SSL.
+ * Se ejecuta una vez por boot: el archivo persiste en el FS del modem, pero
+ * reescribirlo en cada arranque garantiza que una rotacion de CA se aplique
+ * con solo reflashear el firmware.
+ *
+ * Secuencia (SIM7080 Series AT Command Manual, cap. CFS y CSSLCFG):
+ *   CFSINIT -> CFSWFILE (raw PEM tras prompt DOWNLOAD) -> CFSTERM
+ *   CSSLCFG CONVERT (PEM -> formato interno) -> CSSLCFG SSLVERSION -> SNI
+ */
+static esp_err_t mqtt_client_provision_tls(void)
+{
+    static bool s_tls_provisioned;
+    if (s_tls_provisioned) {
+        return ESP_OK;
+    }
+
+    if (strstr(MQTT_CA_CERT_PEM, "PEGAR-CA-AQUI") != NULL) {
+        LOG_ERROR(TAG, "TLS habilitado pero mqtt_ca_cert.h tiene el placeholder. "
+                       "Generar la CA (mosquitto-config/certs) y pegar ca.crt");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const size_t ca_len = strlen(MQTT_CA_CERT_PEM);
+    char cmd[160];
+
+    esp_err_t err = mqtt_client_send_cmd_with_log(AT_CFSINIT,
+                                                  METER_SIM7080G_AT_TIMEOUT_MS,
+                                                  1U, "CFSINIT", false);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    (void)snprintf(cmd, sizeof(cmd), AT_CFSWFILE_FMT,
+                   METER_MQTT_TLS_CA_NAME, (unsigned)ca_len,
+                   (unsigned)METER_MQTT_TLS_FSWRITE_TIMEOUT_MS);
+    err = sim7080g_hal_send_cmd(cmd, "DOWNLOAD", NULL, 0U,
+                                METER_SIM7080G_AT_TIMEOUT_MS, 1U);
+    if (err == ESP_OK) {
+        err = sim7080g_hal_send_payload(MQTT_CA_CERT_PEM, false, NULL,
+                                        METER_MQTT_TLS_FSWRITE_TIMEOUT_MS);
+    }
+    // CFSTERM siempre, incluso tras fallo: libera el buffer del FS para
+    // que el siguiente intento no reciba "operation not allowed".
+    (void)mqtt_client_send_cmd_with_log(AT_CFSTERM,
+                                        METER_SIM7080G_AT_TIMEOUT_MS,
+                                        1U, "CFSTERM", true);
+    if (err != ESP_OK) {
+        LOG_WARN(TAG, "escritura de CA al FS del modem fallo");
+        return err;
+    }
+
+    (void)snprintf(cmd, sizeof(cmd), AT_CSSLCFG_CONVERT_FMT, METER_MQTT_TLS_CA_NAME);
+    err = mqtt_client_send_cmd_with_log(cmd, METER_SIM7080G_AT_TIMEOUT_MS,
+                                        1U, "CSSLCFG CONVERT", false);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    (void)snprintf(cmd, sizeof(cmd), AT_CSSLCFG_VER_FMT,
+                   (unsigned)METER_MQTT_TLS_CTX, (unsigned)METER_MQTT_TLS_VERSION);
+    err = mqtt_client_send_cmd_with_log(cmd, METER_SIM7080G_AT_TIMEOUT_MS,
+                                        1U, "CSSLCFG SSLVERSION", false);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    // SNI: necesario porque el proxy de Railway enruta por hostname.
+    // Opcional en firmwares de modem viejos: si no existe el comando se
+    // continua (el proxy actual enruta por puerto, no por SNI).
+    (void)snprintf(cmd, sizeof(cmd), AT_CSSLCFG_SNI_FMT,
+                   (unsigned)METER_MQTT_TLS_CTX, METER_MQTT_HOST);
+    (void)mqtt_client_send_cmd_with_log(cmd, METER_SIM7080G_AT_TIMEOUT_MS,
+                                        1U, "CSSLCFG SNI", true);
+
+    s_tls_provisioned = true;
+    LOG_INFO(TAG, "TLS provisionado: CA %s, ctx %u, TLS 1.2",
+             METER_MQTT_TLS_CA_NAME, (unsigned)METER_MQTT_TLS_CTX);
+    return ESP_OK;
+}
+#endif // METER_MQTT_USE_TLS
+
 static esp_err_t mqtt_client_configure_profile(void)
 {
     // Limpia sesion previa solo si el modem reporta MQTT conectado.
@@ -234,6 +335,28 @@ static esp_err_t mqtt_client_configure_profile(void)
     if (err != ESP_OK) {
         return err;
     }
+
+#if (METER_MQTT_USE_TLS != 0)
+    err = mqtt_client_provision_tls();
+    if (err != ESP_OK) {
+        return err;
+    }
+    // SMSSL vincula la sesion MQTT al contexto SSL (indice = ctx + 1;
+    // 0 significa "sin SSL").
+    (void)snprintf(cmd, sizeof(cmd), AT_SMSSL_ON_FMT,
+                   (unsigned)(METER_MQTT_TLS_CTX + 1U), METER_MQTT_TLS_CA_NAME);
+    err = mqtt_client_send_cmd_with_log(cmd, METER_SIM7080G_AT_TIMEOUT_MS,
+                                        1U, "SMSSL on", false);
+    if (err != ESP_OK) {
+        return err;
+    }
+#else
+    // Asegura sesion en claro aunque un firmware anterior haya dejado SSL
+    // activo en la NVRAM del modem. Opcional: en modems viejos no existe.
+    (void)mqtt_client_send_cmd_with_log(AT_SMSSL_OFF,
+                                        METER_SIM7080G_AT_TIMEOUT_MS,
+                                        1U, "SMSSL off", true);
+#endif
 
     (void)snprintf(cmd, sizeof(cmd), AT_SMCONF_CLIENT_FMT, METER_MQTT_CLIENT_ID);
     err = mqtt_client_send_cmd_with_log(cmd,
@@ -369,6 +492,11 @@ esp_err_t mqtt_client_connect(void)
         return ESP_OK;
     }
 
+    // Cronometro del establecimiento de sesion: con METER_MQTT_USE_TLS la
+    // diferencia respecto a la conexion en claro es el costo del handshake
+    // TLS sobre LTE-M (dato para el capitulo de ciberseguridad).
+    const int64_t connect_t0_us = esp_timer_get_time();
+
     char response[256];
     response[0] = '\0';
     err = sim7080g_hal_send_cmd(AT_SMCONN,
@@ -410,7 +538,9 @@ esp_err_t mqtt_client_connect(void)
         if (smconn_timed_out &&
             (mqtt_client_wait_connected_window(METER_MQTT_SMCONN_POSTWAIT_MS, 1000U) == ESP_OK)) {
             node_health_mqtt_success_inc();
-            LOG_INFO(TAG, "MQTT connected after delayed SMCONN completion");
+            s_last_connect_ms = (uint32_t)((esp_timer_get_time() - connect_t0_us) / 1000LL);
+            LOG_INFO(TAG, "MQTT connected after delayed SMCONN completion (%lu ms, TLS=%d)",
+                     (unsigned long)s_last_connect_ms, (int)(METER_MQTT_USE_TLS != 0));
             return ESP_OK;
         }
 
@@ -464,7 +594,9 @@ esp_err_t mqtt_client_connect(void)
     if ((err == ESP_OK) && (state == 1)) {
         s_connected = true;
         node_health_mqtt_success_inc();
-        LOG_INFO(TAG, "MQTT connected");
+        s_last_connect_ms = (uint32_t)((esp_timer_get_time() - connect_t0_us) / 1000LL);
+        LOG_INFO(TAG, "MQTT connected (%lu ms, TLS=%d)",
+                 (unsigned long)s_last_connect_ms, (int)(METER_MQTT_USE_TLS != 0));
         return ESP_OK;
     }
 
@@ -540,6 +672,11 @@ esp_err_t mqtt_client_publish(const char *topic, const char *payload, int qos, i
 bool mqtt_client_is_connected(void)
 {
     return s_connected;
+}
+
+uint32_t mqtt_client_get_last_connect_ms(void)
+{
+    return s_last_connect_ms;
 }
 
 bool mqtt_client_check_connected(void)

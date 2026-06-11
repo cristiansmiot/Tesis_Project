@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
             topic_base=mqtt_topic,
             client_id=mqtt_client_id,
             use_tls=mqtt_use_tls,
+            tls_ca_file=settings.MQTT_TLS_CA_FILE,
         )
         client.set_db_session_factory(get_session_local())
         client.start()

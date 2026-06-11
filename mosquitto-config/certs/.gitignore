@@ -1,0 +1,7 @@
+# Claves privadas y certificados generados: nunca al repositorio.
+# Solo se versionan el script generador y este .gitignore.
+*.key
+*.crt
+*.csr
+*.srl
+*.ext

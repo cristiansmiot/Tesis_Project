@@ -29,6 +29,12 @@ build/
 Thumbs.db
 *.log
 
+# Archivos temporales de Microsoft Word (documentos abiertos)
+~$*
+
+# Configuracion local del editor
+.vscode/
+
 # Claude Code (privado)
 .claude/
 

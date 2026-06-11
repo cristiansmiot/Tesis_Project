@@ -1,69 +1,65 @@
-# ⚡ Dashboard Medidor de Energía IoT
+# Frontend — Plataforma de Monitoreo de Energía
 
-Frontend React para visualizar datos del sistema de medición de energía eléctrica.
-Tesis de Maestría en IoT - Pontificia Universidad Javeriana.
+Interfaz web del sistema de medición de energía residencial.
+Trabajo de grado, Maestría en Ingeniería de IoT — Pontificia Universidad Javeriana.
 
-## 🚀 Instalación Rápida (Windows)
+React 18 + Vite 5, Tailwind CSS para estilos y Recharts para gráficas.
+Autenticación contra el backend FastAPI (JWT) con tres roles que condicionan
+la UI: `visualizador` no ve la tab Comandos ni la gestión de usuarios;
+`operador` puede enviar comandos; `super_admin` además administra usuarios.
 
-### Requisitos
-- Node.js 18+ instalado ([Descargar](https://nodejs.org/))
-- Backend FastAPI corriendo en `http://localhost:8000`
+## Vistas
 
-### Pasos
+- **Resumen** (`pages/Resumen.jsx`): KPIs de la flota (medidores online/offline,
+  alarmas, consumo del día, tensión promedio de red con badge CREG), consumo
+  agregado por hora y alertas activas.
+- **Medidores** (`pages/Medidores.jsx`): listado con estado de conexión y señal.
+- **Detalle** (`pages/MedidorDetalle.jsx`): tabs Resumen / Variables /
+  Histórico / Comandos / Eventos. La gráfica de voltaje dibuja las líneas de
+  referencia CREG 024/2015 (99 V y 121 V). Los comandos (reiniciar, corte,
+  restaurar, sincronizar hora) piden confirmación y quedan auditados en el
+  backend.
+- **Eventos / Auditoría / Usuarios / Perfil**: gestión operativa.
+
+## Umbrales de tensión
+
+`src/utils/voltage.js` centraliza la lógica CREG 024/2015: nominal 110 V
+±10 % (99–121 V). Si se cambia el nominal hay que cambiarlo también en el
+backend (`app/config.py`), que es quien genera los eventos persistidos —
+el frontend solo colorea.
+
+## Ejecución local
+
+Requiere Node 18+ y el backend corriendo en `http://localhost:8000`.
 
 ```cmd
-cd energia-iot-frontend
 npm install
 npm run dev
 ```
 
-Abrir: **http://localhost:5173**
+La URL del backend se resuelve en `src/services/api.js` (variable de entorno
+`VITE_API_URL` en producción).
 
-## 📁 Estructura
+## Estructura
 
 ```
 src/
+├── pages/            # Una por ruta (ver App.jsx)
 ├── components/
-│   ├── Dashboard.jsx        # Página principal
-│   ├── IndicadorEnergia.jsx # Tarjetas de V, A, W
-│   ├── GraficoConsumo.jsx   # Gráfico histórico
-│   ├── EstadoDispositivo.jsx# Estado del ESP32
-│   └── TablaHistorial.jsx   # Tabla de mediciones
-├── services/
-│   └── api.js               # Conexión con backend
-├── App.jsx
-├── main.jsx
-└── index.css
+│   ├── common/       # KpiCard, StatusBadge, TabNav, ConfirmDialog
+│   ├── charts/       # ConsumoAgregadoChart, ConsumoHistoricoChart
+│   ├── device/       # Paneles del detalle de medidor
+│   ├── alerts/       # Lista de alertas activas
+│   ├── sidebar/ topbar/
+│   ├── MetricasTransmision.jsx   # Confiabilidad del enlace celular
+│   └── TablaHistorial.jsx
+├── contexts/AuthContext.jsx      # Sesión JWT + permisos por rol
+├── layouts/          # AppLayout (protegido) y AuthLayout (login)
+├── services/api.js   # Cliente axios con interceptor de token
+└── utils/voltage.js  # Umbrales CREG 024/2015
 ```
 
-## 🛠️ Tecnologías
+## Despliegue
 
-- **React 18** - Librería UI
-- **Vite** - Build tool ultrarrápido
-- **Tailwind CSS** - Estilos utilitarios
-- **Recharts** - Gráficos
-- **Lucide React** - Iconos
-
-## 📊 Características
-
-- ✅ Indicadores en tiempo real (V, A, W, FP)
-- ✅ Gráfico de consumo histórico
-- ✅ Estado del dispositivo
-- ✅ Tabla de últimas mediciones
-- ✅ Auto-actualización cada 30 segundos
-- ✅ Diseño responsivo
-
-## ⚙️ Configuración
-
-El frontend se conecta al backend en `http://localhost:8000`.
-Para cambiar la URL, edita `src/services/api.js`:
-
-```javascript
-const API_BASE_URL = 'http://tu-servidor:puerto/api/v1';
-```
-
-## 📝 Notas
-
-- Asegúrate de que el backend esté corriendo antes de iniciar el frontend
-- Crea mediciones de prueba usando Swagger (`http://localhost:8000/docs`)
-- El dashboard se actualiza automáticamente cada 30 segundos
+Railway, build estático servido con `serve`.
+Producción: https://intuitive-generosity-production-bfb2.up.railway.app

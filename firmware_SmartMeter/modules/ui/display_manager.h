@@ -6,7 +6,6 @@
 
 /**
  * @brief Inicializa el gestor de display.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t display_manager_init(void);

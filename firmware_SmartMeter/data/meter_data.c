@@ -15,7 +15,6 @@ static SemaphoreHandle_t s_mutex;
 
 /**
  * @brief Inicializa el buffer compartido de medicion.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t meter_data_init(void)
@@ -61,7 +60,6 @@ esp_err_t meter_data_update(const MeterData_t *new_data)
 
 /**
  * @brief Lee snapshot compartido de forma atomica.
- * @param void Sin parametros.
  * @return Copia de datos de medicion.
  */
 MeterData_t meter_data_get_snapshot(void)

@@ -18,21 +18,18 @@
 
 /**
  * @brief Inicializa la capa MQTT del SIM7080G (parametros de broker).
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t mqtt_client_init(void);
 
 /**
  * @brief Establece sesion MQTT con el broker.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t mqtt_client_connect(void);
 
 /**
  * @brief Cierra sesion MQTT activa.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t mqtt_client_disconnect(void);
@@ -49,21 +46,18 @@ esp_err_t mqtt_client_publish(const char *topic, const char *payload, int qos, i
 
 /**
  * @brief Retorna estado cacheado de sesion MQTT (no bloquea).
- * @param void Sin parametros.
  * @return true si hay sesion activa.
  */
 bool mqtt_client_is_connected(void);
 
 /**
  * @brief Consulta estado de sesion MQTT via AT (puede bloquear).
- * @param void Sin parametros.
  * @return true si hay sesion activa.
  */
 bool mqtt_client_check_connected(void);
 
 /**
  * @brief Recupera conectividad MQTT (red/PDP + reconexion MQTT).
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t mqtt_client_recover(void);

@@ -234,7 +234,6 @@ static esp_err_t ade9153a_probe_diag(ade9153a_diag_t *out, bool verbose_log)
 
 /**
  * @brief Aplica secuencia base de configuracion para Sprint 1.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 static esp_err_t ade9153a_apply_defaults(void)
@@ -338,7 +337,6 @@ static esp_err_t ade9153a_configure_and_start(void)
 
 /**
  * @brief Inicializa ADE9153A (reset + config + start DSP).
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_init(void)
@@ -360,7 +358,6 @@ esp_err_t ade9153a_init(void)
 
 /**
  * @brief Realiza reset fisico del ADE9153A.
- * @param void Sin parametros.
  * @return ESP_OK si pudo ejecutar la secuencia.
  */
 esp_err_t ade9153a_reset(void)
@@ -387,7 +384,6 @@ esp_err_t ade9153a_reset(void)
 
 /**
  * @brief Arranca DSP de metrologia.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_start_dsp(void)
@@ -470,7 +466,6 @@ esp_err_t ade9153a_set_vlevel(float vnom, float vheadroom)
 
 /**
  * @brief Verifica firma de producto y estado RUN.
- * @param void Sin parametros.
  * @return true si ADE9153A responde correctamente.
  */
 bool ade9153a_is_ready(void)

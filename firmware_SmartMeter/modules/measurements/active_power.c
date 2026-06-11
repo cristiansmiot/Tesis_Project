@@ -38,7 +38,6 @@ esp_err_t active_power_init(float target_wcc, float target_whcc)
 
 /**
  * @brief Lee AWATT y lo convierte a watts.
- * @param void Sin parametros.
  * @return Potencia activa en watts.
  */
 float active_power_get_watts(void)
@@ -94,7 +93,6 @@ static float active_power_convert_wh_from_hilo(int32_t raw_hi, uint32_t raw_lo)
 
 /**
  * @brief Lee AWATTHR_HI y lo convierte a Wh.
- * @param void Sin parametros.
  * @return Energia activa en Wh.
  */
 float active_power_get_wh(void)
@@ -133,7 +131,6 @@ float active_power_get_wh(void)
 
 /**
  * @brief Lee AWATTHR_HI crudo para diagnostico.
- * @param void Sin parametros.
  * @return Valor signed del registro o 0 ante error.
  */
 int32_t active_power_get_wh_raw_hi(void)

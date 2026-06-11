@@ -36,7 +36,6 @@ typedef struct {
 
 /**
  * @brief Inicializa el modulo mSure.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t msure_init(void);

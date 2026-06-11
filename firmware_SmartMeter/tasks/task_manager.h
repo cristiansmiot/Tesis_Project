@@ -27,14 +27,12 @@ extern QueueHandle_t q_pq_alerts;
 
 /**
  * @brief Inicializa colas globales del sistema de tareas.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_manager_init(void);
 
 /**
  * @brief Crea y arranca tareas activas del sprint.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_manager_start(void);
@@ -42,7 +40,6 @@ esp_err_t task_manager_start(void);
 /**
  * @brief Solicita calibracion via cola.
  * @param request_type Tipo de calibracion solicitada.
- * @return void
  */
 void task_manager_request_calibration(uint8_t request_type);
 

@@ -8,8 +8,6 @@ static LogLevel_t s_min_level = LOG_LEVEL_INFO;
 
 /**
  * @brief Inicializa el logger de aplicacion.
- * @param void Sin parametros.
- * @return void
  */
 void logger_init(void)
 {
@@ -20,7 +18,6 @@ void logger_init(void)
 /**
  * @brief Configura el nivel minimo del logger.
  * @param level Nivel minimo a emitir.
- * @return void
  */
 void logger_set_level(LogLevel_t level)
 {
@@ -33,7 +30,6 @@ void logger_set_level(LogLevel_t level)
  * @param tag Tag del modulo.
  * @param fmt Formato tipo printf.
  * @param ... Lista variable de argumentos.
- * @return void
  */
 void logger_log(LogLevel_t level, const char *tag, const char *fmt, ...)
 {

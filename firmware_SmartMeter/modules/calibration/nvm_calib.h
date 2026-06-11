@@ -38,7 +38,6 @@ typedef struct {
 
 /**
  * @brief Inicializa backend NVS para constantes de calibracion.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t nvm_calib_init(void);
@@ -66,7 +65,6 @@ esp_err_t nvm_calib_apply(const nvm_calib_record_t *record);
 
 /**
  * @brief Indica si el backend NVS de calibracion esta listo.
- * @param void Sin parametros.
  * @return true si init/open fue exitoso.
  */
 bool nvm_calib_is_ready(void);

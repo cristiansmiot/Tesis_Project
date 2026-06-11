@@ -39,7 +39,6 @@ bool nvm_calib_is_ready(void)
 
 /**
  * @brief Inicializa backend NVS para constantes de calibracion.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t nvm_calib_init(void)

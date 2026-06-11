@@ -17,7 +17,6 @@
 
 /**
  * @brief Crea y arranca task_power_quality.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_power_quality_start(void);

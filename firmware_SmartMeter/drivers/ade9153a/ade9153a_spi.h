@@ -6,14 +6,12 @@
 
 /**
  * @brief Inicializa SPI y pines de control para ADE9153A.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_spi_init(void);
 
 /**
  * @brief Rehace la capa SPI del ADE9153A (bus + device + HAL).
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_spi_recover_bus(void);

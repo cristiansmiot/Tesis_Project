@@ -35,7 +35,6 @@ esp_err_t current_init(float target_aicc, float target_bicc)
 
 /**
  * @brief Lee AIRMS y lo convierte a amperes.
- * @param void Sin parametros.
  * @return Corriente RMS A.
  */
 float current_get_irms_a(void)
@@ -65,7 +64,6 @@ float current_get_irms_a(void)
 
 /**
  * @brief Lee BIRMS y lo convierte a amperes.
- * @param void Sin parametros.
  * @return Corriente RMS B.
  */
 float current_get_irms_b(void)

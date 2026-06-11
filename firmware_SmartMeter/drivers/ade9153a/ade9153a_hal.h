@@ -22,7 +22,6 @@ esp_err_t ade9153a_hal_init(ADE9153A_HAL_t *hal);
 
 /**
  * @brief Retorna la tabla HAL activa.
- * @param void Sin parametros.
  * @return Puntero constante al HAL o NULL si no esta inicializado.
  */
 const ADE9153A_HAL_t *ade9153a_hal_get(void);

@@ -30,7 +30,6 @@ typedef struct {
 
 /**
  * @brief Inicializa almacenamiento compartido de mediciones.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t meter_data_init(void);
@@ -44,7 +43,6 @@ esp_err_t meter_data_update(const MeterData_t *new_data);
 
 /**
  * @brief Obtiene una copia atomica del snapshot actual.
- * @param void Sin parametros.
  * @return Copia de MeterData_t.
  */
 MeterData_t meter_data_get_snapshot(void);

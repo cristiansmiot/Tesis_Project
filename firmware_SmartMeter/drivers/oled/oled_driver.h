@@ -9,14 +9,12 @@
 
 /**
  * @brief Inicializa OLED SSD1306 sobre I2C.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t oled_driver_init(void);
 
 /**
  * @brief Limpia el framebuffer del OLED.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t oled_driver_clear(void);
@@ -31,7 +29,6 @@ esp_err_t oled_driver_draw_text(uint8_t row, const char *text);
 
 /**
  * @brief Env?a el framebuffer actual al display.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t oled_driver_flush(void);

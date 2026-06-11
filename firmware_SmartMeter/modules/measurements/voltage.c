@@ -85,7 +85,6 @@ esp_err_t voltage_init(float target_avcc)
 
 /**
  * @brief Lee AVRMS y lo convierte a volts.
- * @param void Sin parametros.
  * @return Voltaje RMS en volts.
  */
 float voltage_get_vrms(void)
@@ -123,7 +122,6 @@ float voltage_get_vrms(void)
 
 /**
  * @brief Obtiene voltaje pico.
- * @param void Sin parametros.
  * @return Voltaje pico en volts.
  */
 float voltage_get_vpeak(void)
@@ -138,7 +136,6 @@ float voltage_get_vpeak(void)
 
 /**
  * @brief Lee APERIOD y calcula frecuencia de linea.
- * @param void Sin parametros.
  * @return Frecuencia en Hz.
  */
 float voltage_get_frequency(void)

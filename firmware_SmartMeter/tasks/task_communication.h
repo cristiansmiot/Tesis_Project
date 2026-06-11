@@ -17,7 +17,6 @@
 
 /**
  * @brief Crea y arranca la tarea de comunicacion.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_communication_start(void);

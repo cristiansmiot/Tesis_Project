@@ -13,14 +13,12 @@ esp_err_t current_init(float target_aicc, float target_bicc);
 
 /**
  * @brief Obtiene corriente RMS canal A.
- * @param void Sin parametros.
  * @return Corriente RMS en amperes.
  */
 float current_get_irms_a(void);
 
 /**
  * @brief Obtiene corriente RMS canal B.
- * @param void Sin parametros.
  * @return Corriente RMS en amperes.
  */
 float current_get_irms_b(void);

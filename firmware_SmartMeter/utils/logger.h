@@ -13,15 +13,12 @@ typedef enum {
 
 /**
  * @brief Inicializa el sistema de logging.
- * @param void Sin parametros.
- * @return void
  */
 void logger_init(void);
 
 /**
  * @brief Ajusta el nivel minimo de logging.
  * @param level Nivel minimo a emitir.
- * @return void
  */
 void logger_set_level(LogLevel_t level);
 
@@ -31,7 +28,6 @@ void logger_set_level(LogLevel_t level);
  * @param tag Etiqueta de modulo.
  * @param fmt Formato tipo printf.
  * @param ... Argumentos del formato.
- * @return void
  */
 void logger_log(LogLevel_t level, const char *tag, const char *fmt, ...);
 

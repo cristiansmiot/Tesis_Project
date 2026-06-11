@@ -36,7 +36,6 @@ esp_err_t reactive_power_init(float target_varcc, float target_varhcc)
 
 /**
  * @brief Lee AFVAR y lo convierte a VAR.
- * @param void Sin parametros.
  * @return Potencia reactiva en VAR.
  */
 float reactive_power_get_var(void)
@@ -67,7 +66,6 @@ float reactive_power_get_var(void)
 
 /**
  * @brief Lee AFVARHR_HI y lo convierte a VARh.
- * @param void Sin parametros.
  * @return Energia reactiva en VARh.
  */
 float reactive_power_get_varh(void)

@@ -60,7 +60,6 @@ static void ade9153a_spi_unlock(void)
 /**
  * @brief Activa o desactiva CS del ADE9153A.
  * @param active true para CS activo (nivel bajo).
- * @return void
  */
 static void ade9153a_cs_set_impl(bool active)
 {
@@ -70,7 +69,6 @@ static void ade9153a_cs_set_impl(bool active)
 /**
  * @brief Activa o desactiva reset del ADE9153A.
  * @param active true para reset activo.
- * @return void
  */
 static void ade9153a_reset_set_impl(bool active)
 {
@@ -80,7 +78,6 @@ static void ade9153a_reset_set_impl(bool active)
 /**
  * @brief Delay de plataforma para secuencias de init.
  * @param ms Retardo en milisegundos.
- * @return void
  */
 static void ade9153a_platform_delay_ms_impl(uint32_t ms)
 {
@@ -121,7 +118,6 @@ static esp_err_t ade9153a_spi_transfer_impl(uint8_t *tx, uint8_t *rx, size_t len
 
 /**
  * @brief Inicializa SPI y HAL del ADE9153A.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_spi_init(void)
@@ -265,7 +261,6 @@ esp_err_t ade9153a_hal_init(ADE9153A_HAL_t *hal)
 
 /**
  * @brief Retorna el HAL activo.
- * @param void Sin parametros.
  * @return Puntero al HAL o NULL si no hay HAL.
  */
 const ADE9153A_HAL_t *ade9153a_hal_get(void)

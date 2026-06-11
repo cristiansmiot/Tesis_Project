@@ -24,7 +24,6 @@
 
 /**
  * @brief Inicializa monitor de calidad de potencia.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t pq_monitor_init(void);
@@ -38,7 +37,6 @@ uint32_t pq_monitor_process_snapshot(const MeterData_t *snap);
 
 /**
  * @brief Obtiene flags de PQ vigentes.
- * @param void Sin parametros.
  * @return Mascara PQ_FLAG_*.
  */
 uint32_t pq_monitor_get_flags(void);

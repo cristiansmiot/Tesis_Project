@@ -6,7 +6,6 @@ static const char *TAG = "task_power_mgmt";
 
 /**
  * @brief Inicializacion stub para sprint 5.
- * @param void Sin parametros.
  * @return ESP_ERR_NOT_SUPPORTED mientras el modulo no este implementado.
  */
 esp_err_t task_power_mgmt_start(void)

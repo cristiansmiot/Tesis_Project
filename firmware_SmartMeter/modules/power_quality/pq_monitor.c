@@ -10,7 +10,6 @@ static uint32_t s_flags;
 
 /**
  * @brief Inicializa monitor de calidad de potencia.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t pq_monitor_init(void)

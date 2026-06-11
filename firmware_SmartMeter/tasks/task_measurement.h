@@ -4,7 +4,6 @@
 /**
  * @brief Tarea periodica de medicion (1000 ms).
  * @param pvParameters Parametro de tarea no usado.
- * @return void
  */
 void task_measurement(void *pvParameters);
 

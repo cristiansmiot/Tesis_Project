@@ -34,7 +34,6 @@ esp_err_t sim7080g_hal_init(const sim7080g_hal_config_t *cfg);
 
 /**
  * @brief Libera recursos de UART del HAL.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t sim7080g_hal_deinit(void);
@@ -71,7 +70,6 @@ esp_err_t sim7080g_hal_send_payload(const char *payload,
 
 /**
  * @brief Verifica si el HAL fue inicializado.
- * @param void Sin parametros.
  * @return true si esta listo.
  */
 bool sim7080g_hal_is_ready(void);

@@ -13,14 +13,12 @@ esp_err_t reactive_power_init(float target_varcc, float target_varhcc);
 
 /**
  * @brief Obtiene potencia reactiva instantanea.
- * @param void Sin parametros.
  * @return Potencia reactiva en VAR.
  */
 float reactive_power_get_var(void);
 
 /**
  * @brief Obtiene energia reactiva acumulada.
- * @param void Sin parametros.
  * @return Energia reactiva en VARh.
  */
 float reactive_power_get_varh(void);

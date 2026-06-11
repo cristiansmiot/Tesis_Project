@@ -13,14 +13,12 @@ typedef enum {
 
 /**
  * @brief Inicializa los GPIO de navegacion.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t keypad_driver_init(void);
 
 /**
  * @brief Sondea botones con debounce y genera un evento discreto.
- * @param void Sin parametros.
  * @return Evento detectado o KEYPAD_EVENT_NONE.
  */
 keypad_event_t keypad_driver_poll_event(void);

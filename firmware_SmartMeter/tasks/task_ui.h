@@ -5,7 +5,6 @@
 
 /**
  * @brief Crea y arranca la tarea de UI.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_ui_start(void);

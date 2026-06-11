@@ -13,21 +13,18 @@ esp_err_t voltage_init(float target_avcc);
 
 /**
  * @brief Obtiene voltaje RMS de fase A.
- * @param void Sin parametros.
  * @return Voltaje RMS en volts.
  */
 float voltage_get_vrms(void);
 
 /**
  * @brief Obtiene voltaje pico.
- * @param void Sin parametros.
  * @return Voltaje pico en volts.
  */
 float voltage_get_vpeak(void);
 
 /**
  * @brief Obtiene frecuencia de linea.
- * @param void Sin parametros.
  * @return Frecuencia en Hz.
  */
 float voltage_get_frequency(void);

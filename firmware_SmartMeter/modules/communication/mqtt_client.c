@@ -311,7 +311,6 @@ static esp_err_t mqtt_client_configure_profile(void)
 
 /**
  * @brief Inicializa perfil MQTT del modulo SIM7080G.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t mqtt_client_init(void)

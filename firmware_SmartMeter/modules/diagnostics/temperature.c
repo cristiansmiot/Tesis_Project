@@ -18,7 +18,6 @@ static const uint16_t k_temp_cfg_start = 0x000CU;
 
 /**
  * @brief Inicializa modulo de temperatura.
- * @param void Sin parametros.
  * @return ESP_OK siempre.
  */
 esp_err_t temperature_init(void)
@@ -110,7 +109,6 @@ esp_err_t temperature_read_internal(float *out_temp_c)
 
 /**
  * @brief Wrapper legacy para obtener la temperatura ADE.
- * @param void Sin parametros.
  * @return Temperatura en Celsius o 0.0f si falla la lectura.
  */
 float temperature_get_internal(void)

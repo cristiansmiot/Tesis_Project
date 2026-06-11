@@ -35,7 +35,6 @@ esp_err_t apparent_power_init(float target_vacc, float target_vahcc)
 
 /**
  * @brief Lee AVA y lo convierte a VA.
- * @param void Sin parametros.
  * @return Potencia aparente en VA.
  */
 float apparent_power_get_va(void)
@@ -65,7 +64,6 @@ float apparent_power_get_va(void)
 
 /**
  * @brief Lee AVAHR_HI y lo convierte a VAh.
- * @param void Sin parametros.
  * @return Energia aparente en VAh.
  */
 float apparent_power_get_vah(void)

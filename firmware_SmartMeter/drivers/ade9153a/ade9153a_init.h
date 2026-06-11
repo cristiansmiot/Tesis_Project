@@ -27,21 +27,18 @@ typedef struct {
 
 /**
  * @brief Inicializa ADE9153A con secuencia de reset y configuracion base.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_init(void);
 
 /**
  * @brief Ejecuta reset hardware del ADE9153A.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_reset(void);
 
 /**
  * @brief Arranca el DSP de metrologia.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t ade9153a_start_dsp(void);
@@ -71,7 +68,6 @@ esp_err_t ade9153a_set_vlevel(float vnom, float vheadroom);
 
 /**
  * @brief Verifica respuesta basica del chip.
- * @param void Sin parametros.
  * @return true si responde correctamente.
  */
 bool ade9153a_is_ready(void);

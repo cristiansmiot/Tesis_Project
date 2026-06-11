@@ -20,7 +20,6 @@ static bool power_factor_raw_is_valid(uint32_t raw_u32)
 
 /**
  * @brief Inicializa modulo de factor de potencia.
- * @param void Sin parametros.
  * @return ESP_OK siempre.
  */
 esp_err_t power_factor_init(void)
@@ -33,7 +32,6 @@ esp_err_t power_factor_init(void)
 
 /**
  * @brief Lee APF y lo convierte a PF.
- * @param void Sin parametros.
  * @return Factor de potencia.
  */
 float power_factor_get(void)

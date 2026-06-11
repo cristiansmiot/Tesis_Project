@@ -7,7 +7,6 @@
 
 /**
  * @brief Inicializa el estado de navegacion del menu.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t menu_handler_init(void);
@@ -15,7 +14,6 @@ esp_err_t menu_handler_init(void);
 /**
  * @brief Procesa un evento de botones y actualiza el estado UI.
  * @param event Evento recibido.
- * @return void
  */
 void menu_handler_process_event(keypad_event_t event);
 
@@ -28,14 +26,12 @@ esp_err_t menu_handler_get_state(ui_menu_state_t *out);
 
 /**
  * @brief Consume una accion pendiente generada por la UI.
- * @param void Sin parametros.
  * @return Accion pendiente o UI_ACTION_NONE.
  */
 ui_action_t menu_handler_take_pending_action(void);
 
 /**
  * @brief Consume la bandera dirty para saber si debe re-renderizarse.
- * @param void Sin parametros.
  * @return true si habia cambios pendientes.
  */
 bool menu_handler_consume_dirty(void);

@@ -17,7 +17,6 @@
 
 /**
  * @brief Inicializacion stub para etapa de sprint.
- * @param void Sin parametros.
  * @return ESP_ERR_NOT_SUPPORTED hasta implementacion del sprint.
  */
 esp_err_t task_power_mgmt_start(void);

@@ -15,7 +15,6 @@ static float s_swell_exit_v;
 
 /**
  * @brief Inicializa detector de sag/swell.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t sag_swell_init(void)

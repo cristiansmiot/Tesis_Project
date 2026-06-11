@@ -24,14 +24,12 @@
 
 /**
  * @brief Crea y arranca task_calibration.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_calibration_start(void);
 
 /**
  * @brief Obtiene estado actual de calibracion.
- * @param void Sin parametros.
  * @return Mascara CALIB_STATUS_*.
  */
 uint8_t task_calibration_get_status(void);

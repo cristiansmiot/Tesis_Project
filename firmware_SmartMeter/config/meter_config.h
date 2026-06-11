@@ -94,6 +94,35 @@
 // Monitor PQ
 #define METER_PQ_MONITOR_PERIOD_MS 250U
 
+// Supervision de tareas (watchdog por software, ver task_monitor.h)
+// Revision del supervisor cada 5 s. Umbrales por tarea dimensionados al
+// peor caso de cada ciclo, no al periodo nominal:
+// - medicion/PQ: ciclo de 250 ms, pero un recovery de ADE puede tomar segundos.
+// - comunicacion: un bring-up completo del SIM7080G (autoprobe de baud +
+//   registro de red con METER_SIM7080G_NETWORK_TIMEOUT_MS=120 s) puede
+//   superar los 3 minutos; el umbral debe quedar por encima.
+// - UI: poll de teclado continuo, umbral corto.
+#define METER_TASK_MONITOR_PERIOD_MS           5000U
+#define METER_TASK_HB_TIMEOUT_MEASUREMENT_MS   15000U
+#define METER_TASK_HB_TIMEOUT_PQ_MS            15000U
+#define METER_TASK_HB_TIMEOUT_COMM_MS          300000U
+#define METER_TASK_HB_TIMEOUT_UI_MS            15000U
+// Plazo de gracia antes de escalar a esp_restart() cuando una tarea
+// sigue sin latido. 10 minutos: suficiente para descartar recoveries
+// largos del modem y aun asi recuperar el nodo en campo sin visita.
+#define METER_TASK_STALL_REBOOT_MS             600000U
+
+// Buffer offline en MicroSD (store-and-forward)
+// Cuando MQTT no esta disponible las mediciones se anexan a un archivo
+// JSONL en la SD; al recuperar sesion se drenan en lotes pequenos para
+// no retrasar la telemetria en vivo.
+#define METER_SD_BACKLOG_FILE                  "backlog.jsonl"
+#define METER_SD_BACKLOG_DRAIN_PER_CYCLE       8U
+// Epoch minimo para considerar valida la hora del sistema (2020-01-01).
+// Sin hora valida no se bufferiza: una medicion sin timestamp real
+// llegaria al backend con hora de recepcion equivocada.
+#define METER_TIME_VALID_MIN_EPOCH             1577836800LL
+
 // Sprint 3 - Comunicaciones SIM7080G + MQTT
 #define METER_COMM_ENABLE                      1
 #define METER_COMM_PUBLISH_PERIOD_MS           60000U

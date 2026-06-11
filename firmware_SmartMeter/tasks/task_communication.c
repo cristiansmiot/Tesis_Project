@@ -2,14 +2,19 @@
 
 #include <stdbool.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
 #include "ade9153a_init.h"
 #include "data_serializer.h"
+#include "ds3231.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "meter_config.h"
 #include "meter_data.h"         // meter_data_get_snapshot()
 #include "node_health.h"
+#include "sd_storage.h"
 #include "task_calibration.h"   // task_calibration_get_status(), CALIB_STATUS_*
+#include "task_monitor.h"
 #include "../modules/communication/mqtt_client.h"
 #include "rtos_app_config.h"
 #include "sim7080g_init.h"
@@ -19,6 +24,81 @@ static const char *TAG = "task_communication";
 static TaskHandle_t s_task_handle;
 static bool s_subscribed;
 static volatile bool s_force_estado; // set by "status" cmd → publica /estado inmediato
+
+/**
+ * Sincroniza el reloj del sistema y el RTC DS3231 con la hora de red del
+ * SIM7080G (AT+CCLK). Con el sistema en hora, las mediciones bufferizadas
+ * en SD llevan epoch real y el nodo conserva la hora entre reinicios
+ * gracias a la bateria del DS3231.
+ */
+static void task_communication_apply_network_time(void)
+{
+    if (sim7080g_sync_network_time() != ESP_OK) {
+        LOG_WARN(TAG, "CCLK sin hora de red valida");
+        return;
+    }
+    const time_t epoch = sim7080g_get_network_epoch();
+    if (epoch < (time_t)METER_TIME_VALID_MIN_EPOCH) {
+        return;
+    }
+
+    const struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+    (void)settimeofday(&tv, NULL);
+
+    if (ds3231_is_ready()) {
+        struct tm utc = {0};
+        (void)gmtime_r(&epoch, &utc);
+        if (ds3231_set_time(&utc) != ESP_OK) {
+            LOG_WARN(TAG, "DS3231 no acepto la hora de red");
+        }
+    }
+    LOG_INFO(TAG, "hora sincronizada desde red celular: %s UTC",
+             sim7080g_get_network_time());
+}
+
+/** Consumidor del backlog: re-publica una linea SenML guardada en SD. */
+static esp_err_t task_communication_backlog_publish(const char *line, void *ctx)
+{
+    (void)ctx;
+    return mqtt_client_publish(METER_MQTT_TOPIC_DATA, line,
+                               METER_MQTT_PUBLISH_QOS, 0);
+}
+
+/**
+ * Guarda la medicion actual en el backlog de la SD cuando MQTT no esta
+ * disponible. Limitada a una muestra por METER_COMM_PUBLISH_PERIOD_MS para
+ * que los reintentos rapidos (backoff de 2-12 s) no inflen el archivo con
+ * lecturas casi identicas. Requiere hora de sistema valida: una medicion
+ * sin timestamp real llegaria al backend con la hora equivocada.
+ */
+static void task_communication_backlog_store(void)
+{
+    static TickType_t s_last_store_tick;
+
+    if (!sd_storage_is_mounted()) {
+        return;
+    }
+    const time_t now = time(NULL);
+    if (now < (time_t)METER_TIME_VALID_MIN_EPOCH) {
+        return;
+    }
+    const TickType_t tick = xTaskGetTickCount();
+    if ((s_last_store_tick != 0U) &&
+        ((tick - s_last_store_tick) < pdMS_TO_TICKS(METER_COMM_PUBLISH_PERIOD_MS))) {
+        return;
+    }
+
+    const MeterData_t snap = meter_data_get_snapshot();
+    char line[768];
+    if (data_serializer_build_senml_datos_at(&snap, (double)now,
+                                             line, sizeof(line)) != ESP_OK) {
+        return;
+    }
+    if (sd_storage_append_line(METER_SD_BACKLOG_FILE, line) == ESP_OK) {
+        s_last_store_tick = tick;
+        LOG_INFO(TAG, "medicion guardada en backlog SD (MQTT caido)");
+    }
+}
 
 /**
  * @brief Procesa comando recibido via MQTT desde el dashboard.
@@ -61,8 +141,9 @@ static void task_communication_process_cmd(const char *cmd)
         // TODO: cerrar GPIO del rele de suministro cuando el hardware este cableado
         LOG_WARN(TAG, "relay_on: GPIO relay not wired yet");
     } else if (strcmp(cmd, "sync_time") == 0) {
-        // TODO: sincronizar RTC via SNTP cuando se integre el modulo de tiempo
-        LOG_INFO(TAG, "sync_time: NTP sync not yet implemented");
+        // El comando llego por MQTT, asi que la sesion celular esta viva
+        // y AT+CCLK responde con la hora de red.
+        task_communication_apply_network_time();
     } else {
         LOG_WARN(TAG, "unknown remote cmd: %s", cmd);
     }
@@ -99,6 +180,7 @@ static void task_communication(void *pvParameters)
     uint8_t consecutive_failures = 0U;
 
     for (;;) {
+        task_monitor_heartbeat(TASK_MON_COMMUNICATION);
         bool fast_retry = false;
 
         // ?????? Gestion de sesion MQTT ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
@@ -161,8 +243,9 @@ static void task_communication(void *pvParameters)
                 }
             }
 
-            // Sincronizar fecha/hora de red tras establecer sesion.
-            (void)sim7080g_sync_network_time();
+            // Sincronizar fecha/hora de red tras establecer sesion
+            // (sistema + RTC DS3231; habilita el timestamping del backlog).
+            task_communication_apply_network_time();
 
             // ?????? /cmd: suscribirse al topico de comandos remotos ??????????????????????????????
             {
@@ -217,6 +300,19 @@ static void task_communication(void *pvParameters)
 
         node_health_msg_tx_inc();
         LOG_INFO(TAG, "/datos SenML publicado topic=%s", METER_MQTT_TOPIC_DATA);
+
+        // ── Drenar backlog SD acumulado durante caidas de MQTT ───────────
+        // Lotes pequenos por ciclo para no retrasar la telemetria en vivo.
+        if (sd_storage_is_mounted()) {
+            size_t pendientes = 0U;
+            const esp_err_t drain_err = sd_storage_drain_lines(
+                METER_SD_BACKLOG_FILE, METER_SD_BACKLOG_DRAIN_PER_CYCLE,
+                task_communication_backlog_publish, NULL, &pendientes);
+            if ((drain_err == ESP_OK) && (pendientes > 0U)) {
+                LOG_INFO(TAG, "backlog SD: %u mediciones aun pendientes",
+                         (unsigned)pendientes);
+            }
+        }
 
         // ?????? /alerta: evento de calidad de potencia (event-driven) ?????????????????????????????????
         // Solo se publica si hay flags PQ activos en el snapshot actual.
@@ -273,6 +369,8 @@ static void task_communication(void *pvParameters)
 
 cycle_delay:
         if (fast_retry) {
+            // Sin MQTT: preservar la medicion en SD para entrega diferida.
+            task_communication_backlog_store();
             if (consecutive_failures < UINT8_MAX) {
                 ++consecutive_failures;
             }
@@ -297,6 +395,7 @@ cycle_delay:
                 const TickType_t remaining = period_ticks - (xTaskGetTickCount() - start_tick);
                 const TickType_t sleep = (remaining < hb_ticks) ? remaining : hb_ticks;
                 vTaskDelay(sleep);
+                task_monitor_heartbeat(TASK_MON_COMMUNICATION);
 
                 // ?????? Revisar comandos remotos pendientes ??????????????????????????????????????????
                 if (s_subscribed) {
@@ -320,7 +419,6 @@ cycle_delay:
 
 /**
  * @brief Crea y arranca la tarea de comunicacion.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_communication_start(void)

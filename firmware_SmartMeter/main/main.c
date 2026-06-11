@@ -1,3 +1,6 @@
+#include <sys/time.h>
+#include <time.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -25,8 +28,6 @@ static const char *TAG = "main";
 
 /**
  * @brief Punto de entrada principal del firmware.
- * @param void Sin parametros.
- * @return void
  */
 void app_main(void)
 {
@@ -77,6 +78,20 @@ void app_main(void)
         if (rtc_err != ESP_OK) {
             LOG_WARN(TAG, "DS3231 init fallo: %s (continuando sin RTC)",
                      esp_err_to_name(rtc_err));
+        } else {
+            // Sembrar el reloj del sistema desde el RTC: asi el backlog SD
+            // puede timestampear mediciones antes de que el modem registre
+            // en red y sincronice via AT+CCLK. 1577836800 = 2020-01-01;
+            // por debajo, el RTC perdio la bateria y su hora no sirve.
+            time_t rtc_epoch = 0;
+            if ((ds3231_get_epoch(&rtc_epoch) == ESP_OK) &&
+                (rtc_epoch >= (time_t)METER_TIME_VALID_MIN_EPOCH)) {
+                const struct timeval tv = { .tv_sec = rtc_epoch, .tv_usec = 0 };
+                (void)settimeofday(&tv, NULL);
+                LOG_INFO(TAG, "hora del sistema sembrada desde DS3231");
+            } else {
+                LOG_WARN(TAG, "DS3231 sin hora valida - esperar sync celular");
+            }
         }
     }
 
@@ -100,15 +115,33 @@ void app_main(void)
     }
 
     if (!sim_focus_mode) {
-        ESP_ERROR_CHECK(voltage_init(TARGET_AVCC));
-        ESP_ERROR_CHECK(current_init(TARGET_AICC, TARGET_AICC));
-        ESP_ERROR_CHECK(active_power_init(TARGET_WCC, TARGET_WHCC));
-        ESP_ERROR_CHECK(reactive_power_init(TARGET_WCC, TARGET_WHCC));
-        ESP_ERROR_CHECK(apparent_power_init(TARGET_WCC, TARGET_WHCC));
-        ESP_ERROR_CHECK(power_factor_init());
-        ESP_ERROR_CHECK(temperature_init());
+        // Los modulos de medicion solo cachean constantes de conversion:
+        // un fallo aqui es de configuracion, no de hardware. Se registra y
+        // se continua para que comunicacion/UI sigan reportando el estado
+        // del nodo en vez de dejarlo mudo con un abort().
+        struct {
+            const char *name;
+            esp_err_t err;
+        } init_results[] = {
+            { "voltage",        voltage_init(TARGET_AVCC) },
+            { "current",        current_init(TARGET_AICC, TARGET_AICC) },
+            { "active_power",   active_power_init(TARGET_WCC, TARGET_WHCC) },
+            { "reactive_power", reactive_power_init(TARGET_WCC, TARGET_WHCC) },
+            { "apparent_power", apparent_power_init(TARGET_WCC, TARGET_WHCC) },
+            { "power_factor",   power_factor_init() },
+            { "temperature",    temperature_init() },
+        };
+        for (size_t i = 0; i < sizeof(init_results) / sizeof(init_results[0]); ++i) {
+            if (init_results[i].err != ESP_OK) {
+                LOG_ERROR(TAG, "%s_init fallo: %s (modo degradado)",
+                          init_results[i].name, esp_err_to_name(init_results[i].err));
+                fault_set(FAULT_INIT, init_results[i].name);
+            }
+        }
     }
 
+    // Las colas y el arranque de tareas si son condicion de vida del nodo:
+    // sin scheduler poblado no hay nada que degradar, solo reiniciar.
     ESP_ERROR_CHECK(task_manager_init());
     ESP_ERROR_CHECK(task_manager_start());
 

@@ -9,6 +9,7 @@
 #include "rtos_app_config.h"
 #include "sag_swell.h"
 #include "task_manager.h"
+#include "task_monitor.h"
 #include "logger.h"
 
 static const char *TAG = "task_power_quality";
@@ -24,6 +25,7 @@ static void task_power_quality(void *pvParameters)
 
     for (;;) {
         vTaskDelayUntil(&last_wake, period_ticks);
+        task_monitor_heartbeat(TASK_MON_POWER_QUALITY);
 
         const MeterData_t snap = meter_data_get_snapshot();
         const uint32_t flags = pq_monitor_process_snapshot(&snap);
@@ -40,7 +42,6 @@ static void task_power_quality(void *pvParameters)
 
 /**
  * @brief Crea y arranca task_power_quality.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t task_power_quality_start(void)

@@ -15,6 +15,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 #include "esp_err.h"
 
 #define SIM7080G_STATE_MODEM_READY   (1U << 0)
@@ -24,7 +25,6 @@
 
 /**
  * @brief Inicializa modem SIM7080G y valida enlace AT.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t sim7080g_init(void);
@@ -38,14 +38,12 @@ esp_err_t sim7080g_wait_network(uint32_t timeout_ms);
 
 /**
  * @brief Activa PDP con APN configurado y valida estado.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t sim7080g_activate_pdp(void);
 
 /**
  * @brief Flujo compacto de recuperacion de conectividad (red + PDP).
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t sim7080g_recover_network(void);
@@ -60,48 +58,41 @@ esp_err_t sim7080g_cycle_pdp(void);
 
 /**
  * @brief Verifica estado runtime de red+attach+PDP consultando AT.
- * @param void Sin parametros.
  * @return ESP_OK si red y PDP siguen listos.
  */
 esp_err_t sim7080g_refresh_runtime_state(void);
 
 /**
  * @brief Obtiene mascara de estado interna.
- * @param void Sin parametros.
  * @return Bits SIM7080G_STATE_*.
  */
 uint8_t sim7080g_get_state(void);
 
 /**
  * @brief Verifica disponibilidad del modem.
- * @param void Sin parametros.
  * @return true si modem esta listo.
  */
 bool sim7080g_is_modem_ready(void);
 
 /**
  * @brief Verifica si la red celular esta lista.
- * @param void Sin parametros.
  * @return true si hay registro de red.
  */
 bool sim7080g_is_network_ready(void);
 
 /**
  * @brief Verifica si el contexto PDP esta activo.
- * @param void Sin parametros.
  * @return true si PDP esta activo.
  */
 bool sim7080g_is_pdp_ready(void);
 
 /**
  * @brief Fuerza reset de estado interno modem/UART para re-probe completo.
- * @param void Sin parametros.
  */
 void sim7080g_mark_modem_unready(void);
 
 /**
  * @brief Obtiene APN en uso (auto-detectado o configurado).
- * @param void Sin parametros.
  * @return APN actual.
  */
 const char *sim7080g_get_apn(void);
@@ -128,6 +119,12 @@ esp_err_t sim7080g_sync_network_time(void);
  * @return Cadena "YYYY-MM-DD HH:MM" o cadena vacia si no disponible.
  */
 const char *sim7080g_get_network_time(void);
+
+/**
+ * @brief Epoch UTC capturado en la ultima sincronizacion AT+CCLK.
+ * @return Segundos desde 1970, o 0 si nunca se sincronizo.
+ */
+time_t sim7080g_get_network_epoch(void);
 
 #endif // SIM7080G_INIT_H
 

@@ -29,7 +29,6 @@ static const char *data_serializer_ade_action_name(ade9153a_recovery_action_t ac
 
 /**
  * @brief Inicializa serializer de telemetria.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t data_serializer_init(void)
@@ -118,6 +117,19 @@ esp_err_t data_serializer_build_senml_datos(const MeterData_t *snap,
                                              char *out,
                                              size_t out_len)
 {
+    // bt=0: RFC 8428 deja que el receptor use el tiempo de recepcion como
+    // referencia (sec 4.5.3: valores < 2^28 son relativos). Para telemetria
+    // en vivo el backend asigna timestamp UTC al recibir, asi que el reloj
+    // local no importa. Para datos diferidos (backlog SD) usar la variante
+    // _at() con epoch real.
+    return data_serializer_build_senml_datos_at(snap, 0.0, out, out_len);
+}
+
+esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
+                                               double bt_epoch,
+                                               char *out,
+                                               size_t out_len)
+{
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -125,12 +137,7 @@ esp_err_t data_serializer_build_senml_datos(const MeterData_t *snap,
         return ESP_ERR_INVALID_ARG;
     }
 
-    // bt=0: RFC 8428 deja que el receptor use el tiempo de recepcion como
-    // referencia. El nodo no dispone de RTC sincronizado por NTP/celular, por
-    // lo que publicar uptime como bt induciria al backend a interpretarlo
-    // como "hace X segundos" (RFC 8428 sec 4.5.3: valores < 2^28 son tiempos
-    // relativos). El backend asigna timestamp UTC al recibir.
-    const double bt = 0.0;
+    const double bt = bt_epoch;
 
     // Registro base + 10 campos de medicion electrica.
     // Unidades SenML: V, A, W, VAR, VA, / (adim.), Hz, Wh, Cel, count.

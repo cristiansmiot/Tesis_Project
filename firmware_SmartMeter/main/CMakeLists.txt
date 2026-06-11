@@ -22,6 +22,7 @@ set(SRCS
     "../modules/power_quality/pq_monitor.c"
     "../modules/diagnostics/temperature.c"
     "../modules/diagnostics/fault_handler.c"
+    "../modules/diagnostics/task_monitor.c"
     "../modules/communication/mqtt_client.c"
     "../modules/communication/data_serializer.c"
     "../modules/communication/node_health.c"

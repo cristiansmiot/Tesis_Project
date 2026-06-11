@@ -20,6 +20,7 @@
 #include "rtos_app_config.h"
 #include "task_calibration.h"
 #include "task_manager.h"
+#include "task_monitor.h"
 
 static const char *TAG = "task_ui";
 static TaskHandle_t s_task_handle;
@@ -149,6 +150,7 @@ static void task_ui(void *pvParameters)
     task_ui_set_status("UI BOOT");
 
     for (;;) {
+        task_monitor_heartbeat(TASK_MON_UI);
         const int64_t now_ms = task_ui_now_ms();
 
         if (!menu_ready) {

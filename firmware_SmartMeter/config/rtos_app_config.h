@@ -8,6 +8,9 @@
 #define TASK_PRIO_COMMUNICATION  2
 #define TASK_PRIO_UI             1
 #define TASK_PRIO_POWER_MGMT     1
+// El supervisor corre por encima de todas: si una tarea de mayor prioridad
+// entra en busy-loop, un supervisor de prioridad baja jamas ejecutaria.
+#define TASK_PRIO_SUPERVISOR     6
 
 // Stack sizes (palabras de FreeRTOS)
 #define TASK_STACK_MEASUREMENT   4096
@@ -16,6 +19,7 @@
 #define TASK_STACK_COMM          6144
 #define TASK_STACK_UI            5120
 #define TASK_STACK_POWER_MGMT    4096
+#define TASK_STACK_SUPERVISOR    3072
 
 // Longitudes de queues
 #define QUEUE_METER_EVENTS_LEN   16

@@ -20,6 +20,7 @@
 #include "rtos_app_config.h"
 #include "task_calibration.h"
 #include "task_manager.h"
+#include "task_monitor.h"
 #include "temperature.h"
 #include "voltage.h"
 #include "freertos/FreeRTOS.h"
@@ -411,7 +412,6 @@ static void task_measurement_energy_nvs_try_save(bool force)
 /**
  * @brief Tarea periodica de adquisicion de metrologia.
  * @param pvParameters Parametros de tarea (no usado).
- * @return void
  */
 void task_measurement(void *pvParameters)
 {
@@ -460,6 +460,7 @@ void task_measurement(void *pvParameters)
     for (;;) {
         // Regla TR-1: primer statement del loop.
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(cycle_ms));
+        task_monitor_heartbeat(TASK_MON_MEASUREMENT);
 
         MeterData_t snap = {0};
         snap.vrms = voltage_get_vrms();

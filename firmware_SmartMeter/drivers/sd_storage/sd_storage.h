@@ -49,6 +49,36 @@ esp_err_t sd_storage_append_line(const char *relpath, const char *line);
  */
 esp_err_t sd_storage_get_usage(uint32_t *out_total_mb, uint32_t *out_free_mb);
 
+/**
+ * Callback para drenar lineas pendientes. Devuelve ESP_OK si la linea se
+ * proceso (p.ej. se publico por MQTT) y puede descartarse del archivo;
+ * cualquier otro valor detiene el drenado y conserva la linea.
+ */
+typedef esp_err_t (*sd_line_consumer_t)(const char *line, void *ctx);
+
+/**
+ * @brief Consume hasta max_lines del inicio de un archivo de backlog.
+ *
+ * Lee linea por linea invocando al consumidor; las lineas consumidas se
+ * eliminan reescribiendo el remanente a un archivo temporal que reemplaza
+ * al original (la SD no permite truncar por el frente). Si el consumidor
+ * falla a mitad, lo ya consumido no se repite y el resto queda en el
+ * archivo para el siguiente intento.
+ *
+ * @param relpath       Ruta relativa al mount (p.ej. "backlog.jsonl").
+ * @param max_lines     Tope de lineas a consumir en esta llamada.
+ * @param consumer      Callback que procesa cada linea.
+ * @param ctx           Contexto opaco que se pasa al callback.
+ * @param out_remaining Lineas que quedaron pendientes (puede ser NULL).
+ * @return ESP_OK si proceso al menos cero lineas sin error de E/S;
+ *         ESP_ERR_NOT_FOUND si el archivo no existe (backlog vacio).
+ */
+esp_err_t sd_storage_drain_lines(const char *relpath,
+                                 size_t max_lines,
+                                 sd_line_consumer_t consumer,
+                                 void *ctx,
+                                 size_t *out_remaining);
+
 #ifdef __cplusplus
 }
 #endif

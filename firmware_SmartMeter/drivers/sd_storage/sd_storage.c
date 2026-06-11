@@ -137,6 +137,103 @@ esp_err_t sd_storage_append_line(const char *relpath, const char *line)
     return ESP_OK;
 }
 
+esp_err_t sd_storage_drain_lines(const char *relpath,
+                                 size_t max_lines,
+                                 sd_line_consumer_t consumer,
+                                 void *ctx,
+                                 size_t *out_remaining)
+{
+    if ((relpath == NULL) || (consumer == NULL) || (max_lines == 0U)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_mounted) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char fullpath[128];
+    char tmppath[128];
+    int n = snprintf(fullpath, sizeof(fullpath), "%s/%s", SD_MOUNT_POINT, relpath);
+    if ((n <= 0) || ((size_t)n >= sizeof(fullpath))) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    n = snprintf(tmppath, sizeof(tmppath), "%s/%s.tmp", SD_MOUNT_POINT, relpath);
+    if ((n <= 0) || ((size_t)n >= sizeof(tmppath))) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    FILE *in = fopen(fullpath, "r");
+    if (in == NULL) {
+        if (out_remaining != NULL) {
+            *out_remaining = 0U;
+        }
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    // Buffer de linea estatico: las lineas son payloads SenML de /datos
+    // (~400 B); 768 coincide con el buffer de publicacion de task_communication.
+    static char line[768];
+    size_t consumed = 0U;
+    size_t remaining = 0U;
+    bool consumer_stopped = false;
+    FILE *out = NULL;
+
+    while (fgets(line, sizeof(line), in) != NULL) {
+        // Quitar el '\n' final para entregar la linea limpia al consumidor.
+        const size_t len = strlen(line);
+        if ((len > 0U) && (line[len - 1U] == '\n')) {
+            line[len - 1U] = '\0';
+        }
+        if (line[0] == '\0') {
+            continue; // linea vacia: descartar silenciosamente
+        }
+
+        if (!consumer_stopped && (consumed < max_lines)) {
+            if (consumer(line, ctx) == ESP_OK) {
+                ++consumed;
+                continue;
+            }
+            consumer_stopped = true;
+        }
+
+        // Linea no consumida: preservarla en el archivo temporal.
+        if (out == NULL) {
+            out = fopen(tmppath, "w");
+            if (out == NULL) {
+                LOG_WARN(TAG, "no se pudo crear %s - backlog intacto", tmppath);
+                (void)fclose(in);
+                // Lo consumido se repetira en el proximo drenado; el backend
+                // tolera duplicados (mediciones idempotentes por timestamp).
+                return ESP_FAIL;
+            }
+        }
+        (void)fputs(line, out);
+        (void)fputc('\n', out);
+        ++remaining;
+    }
+
+    (void)fclose(in);
+    if (out != NULL) {
+        (void)fclose(out);
+        (void)remove(fullpath);
+        if (rename(tmppath, fullpath) != 0) {
+            LOG_WARN(TAG, "rename %s -> %s fallo", tmppath, fullpath);
+            return ESP_FAIL;
+        }
+    } else {
+        // Todo consumido: el backlog quedo vacio.
+        (void)remove(fullpath);
+    }
+
+    if (consumed > 0U) {
+        LOG_INFO(TAG, "backlog %s: %u lineas drenadas, %u pendientes",
+                 relpath, (unsigned)consumed, (unsigned)remaining);
+    }
+    if (out_remaining != NULL) {
+        *out_remaining = remaining;
+    }
+    return ESP_OK;
+}
+
 esp_err_t sd_storage_get_usage(uint32_t *out_total_mb, uint32_t *out_free_mb)
 {
     if (!s_mounted) {

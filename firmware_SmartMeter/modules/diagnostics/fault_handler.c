@@ -6,11 +6,10 @@
 
 static const char *TAG = "fault_handler";
 static FaultCode_t s_last_fault = FAULT_NONE;
-static uint32_t s_fault_counts[6];
+static uint32_t s_fault_counts[FAULT_CODE_MAX + 1];
 
 /**
  * @brief Inicializa estado interno de fallas.
- * @param void Sin parametros.
  * @return ESP_OK siempre.
  */
 esp_err_t fault_handler_init(void)
@@ -24,11 +23,10 @@ esp_err_t fault_handler_init(void)
  * @brief Registra una falla y acumula contador.
  * @param code Codigo de falla.
  * @param context Contexto opcional.
- * @return void
  */
 void fault_set(FaultCode_t code, const char *context)
 {
-    if ((code < FAULT_NONE) || (code > FAULT_MUTEX)) {
+    if ((code < FAULT_NONE) || (code > FAULT_CODE_MAX)) {
         LOG_WARN(TAG, "invalid fault code: %d", (int)code);
         return;
     }
@@ -44,7 +42,6 @@ void fault_set(FaultCode_t code, const char *context)
 
 /**
  * @brief Retorna la ultima falla.
- * @param void Sin parametros.
  * @return Codigo de falla.
  */
 FaultCode_t fault_get_last(void)
@@ -59,7 +56,7 @@ FaultCode_t fault_get_last(void)
  */
 uint32_t fault_get_count(FaultCode_t code)
 {
-    if ((code < FAULT_NONE) || (code > FAULT_MUTEX)) {
+    if ((code < FAULT_NONE) || (code > FAULT_CODE_MAX)) {
         return 0U;
     }
     return s_fault_counts[(int)code];
@@ -67,8 +64,6 @@ uint32_t fault_get_count(FaultCode_t code)
 
 /**
  * @brief Limpia ultima falla registrada.
- * @param void Sin parametros.
- * @return void
  */
 void fault_clear_last(void)
 {
@@ -77,7 +72,6 @@ void fault_clear_last(void)
 
 /**
  * @brief Evalua si existe alguna falla critica acumulada.
- * @param void Sin parametros.
  * @return true si hay fallas criticas.
  */
 bool fault_has_critical(void)

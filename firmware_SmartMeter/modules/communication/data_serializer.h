@@ -23,6 +23,16 @@ esp_err_t data_serializer_build_senml_datos(const MeterData_t *snap,
                                              char *out,
                                              size_t out_len);
 
+/**
+ * Variante con base time explicito (epoch UTC en segundos). Se usa al
+ * bufferizar en SD: una medicion entregada horas despues debe llevar su
+ * propio timestamp, no el de recepcion del backend (bt=0).
+ */
+esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
+                                               double bt_epoch,
+                                               char *out,
+                                               size_t out_len);
+
 esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
                                               bool cellular_ok,
                                               bool mqtt_ok,

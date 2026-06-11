@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "board_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -569,7 +570,6 @@ static esp_err_t sim7080g_probe_modem(void)
 
 /**
  * @brief Inicializa modem SIM7080G y valida enlace AT base.
- * @param void Sin parametros.
  * @return ESP_OK en caso de exito.
  */
 esp_err_t sim7080g_init(void)
@@ -972,6 +972,7 @@ const char *sim7080g_get_apn(void)
 }
 
 static char s_network_time[20];
+static time_t s_network_epoch; // 0 = aun sin sincronizar con la red
 
 esp_err_t sim7080g_read_imei(void)
 {
@@ -1020,21 +1021,25 @@ esp_err_t sim7080g_sync_network_time(void)
     }
 
     // Response format: +CCLK: "YY/MM/DD,HH:MM:SS+ZZ"
+    // ZZ = offset de zona horaria en cuartos de hora (Colombia: -20 = UTC-5).
     const char *q1 = strchr(resp, '"');
     if (q1 == NULL) {
         return ESP_ERR_INVALID_RESPONSE;
     }
     ++q1;
-    // Parse YY/MM/DD,HH:MM — acota los campos a uint8_t para que el compilador
-    // pueda calcular el tamano maximo de snprintf (2 digitos por campo = 17 bytes).
-    unsigned yy = 0U, mo = 0U, dd = 0U, hh = 0U, mi = 0U;
-    if (sscanf(q1, "%u/%u/%u,%u:%u", &yy, &mo, &dd, &hh, &mi) < 5) {
+    unsigned yy = 0U, mo = 0U, dd = 0U, hh = 0U, mi = 0U, ss = 0U;
+    int tz_quarters = 0;
+    const int parsed = sscanf(q1, "%u/%u/%u,%u:%u:%u%d",
+                              &yy, &mo, &dd, &hh, &mi, &ss, &tz_quarters);
+    if (parsed < 5) {
         return ESP_ERR_INVALID_RESPONSE;
     }
     // Reject default/invalid time (year 0 or 80 means not synced)
     if ((yy == 0U) || (yy == 80U)) {
         return ESP_ERR_NOT_FOUND;
     }
+    // Acotar a uint8_t para que el compilador pueda calcular el tamano
+    // maximo del snprintf (2 digitos por campo).
     const uint8_t yy8 = (uint8_t)(yy % 100U);
     const uint8_t mo8 = (uint8_t)(mo % 100U);
     const uint8_t dd8 = (uint8_t)(dd % 100U);
@@ -1044,7 +1049,30 @@ esp_err_t sim7080g_sync_network_time(void)
                    "20%02u-%02u-%02u %02u:%02u",
                    (unsigned)yy8, (unsigned)mo8, (unsigned)dd8,
                    (unsigned)hh8, (unsigned)mi8);
+
+    // Epoch UTC para sincronizar reloj del sistema y RTC DS3231.
+    // mktime() interpreta hora local; ESP-IDF arranca con TZ=UTC por
+    // defecto, asi que el resultado es epoch directo. El offset CCLK se
+    // resta porque la hora reportada es local de la red, no UTC.
+    if (parsed >= 6) {
+        struct tm t = {0};
+        t.tm_year = (int)(2000U + yy) - 1900;
+        t.tm_mon  = (int)mo - 1;
+        t.tm_mday = (int)dd;
+        t.tm_hour = (int)hh;
+        t.tm_min  = (int)mi;
+        t.tm_sec  = (int)ss;
+        const time_t local_epoch = mktime(&t);
+        if (local_epoch > 0) {
+            s_network_epoch = local_epoch - ((time_t)tz_quarters * 15 * 60);
+        }
+    }
     return ESP_OK;
+}
+
+time_t sim7080g_get_network_epoch(void)
+{
+    return s_network_epoch;
 }
 
 const char *sim7080g_get_network_time(void)

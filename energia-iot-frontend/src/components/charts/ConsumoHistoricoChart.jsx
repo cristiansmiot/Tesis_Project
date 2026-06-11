@@ -7,8 +7,10 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceLine,
   ResponsiveContainer,
 } from 'recharts';
+import { VOLTAJE_MIN, VOLTAJE_MAX } from '../../utils/voltage';
 
 const variables = [
   { key: 'potencia', label: 'Potencia', color: '#10b981', unidad: 'W' },
@@ -121,12 +123,18 @@ const ConsumoHistoricoChart = ({
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-            <XAxis dataKey="hora" tick={{ fontSize: 12 }} stroke="#9ca3af" />
+            <XAxis
+              dataKey="hora"
+              tick={{ fontSize: 12 }}
+              stroke="#9ca3af"
+              label={{ value: 'Hora', position: 'insideBottomRight', offset: -5, fontSize: 12, fill: '#6b7280' }}
+            />
             <YAxis
               tick={{ fontSize: 12 }}
               stroke="#9ca3af"
+              domain={variable === 'voltaje' ? ['auto', 'auto'] : [0, 'auto']}
               label={{
-                value: variableActual.unidad,
+                value: `${variableActual.label} (${variableActual.unidad})`,
                 angle: -90,
                 position: 'insideLeft',
                 fontSize: 12,
@@ -135,6 +143,23 @@ const ConsumoHistoricoChart = ({
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend />
+            {/* Límites admisibles CREG 024/2015 (110 V ±10%) solo en la vista de voltaje */}
+            {variable === 'voltaje' && (
+              <>
+                <ReferenceLine
+                  y={VOLTAJE_MAX}
+                  stroke="#ef4444"
+                  strokeDasharray="6 4"
+                  label={{ value: `Máx CREG ${VOLTAJE_MAX} V`, fontSize: 11, fill: '#ef4444', position: 'insideTopRight' }}
+                />
+                <ReferenceLine
+                  y={VOLTAJE_MIN}
+                  stroke="#ef4444"
+                  strokeDasharray="6 4"
+                  label={{ value: `Mín CREG ${VOLTAJE_MIN} V`, fontSize: 11, fill: '#ef4444', position: 'insideBottomRight' }}
+                />
+              </>
+            )}
             <Area
               type="monotone"
               dataKey={variable}

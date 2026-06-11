@@ -1,14 +1,23 @@
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Monitor, Wifi, WifiOff, AlertTriangle, Zap } from 'lucide-react';
+import { Monitor, Wifi, WifiOff, AlertTriangle, Zap, Activity } from 'lucide-react';
 import KpiCard from '../components/common/KpiCard';
 import ConsumoAgregadoChart from '../components/charts/ConsumoAgregadoChart';
 import ActiveAlertsList from '../components/alerts/ActiveAlertsList';
 import { dashboardAPI, eventosAPI } from '../services/api';
+import { evaluarVoltaje } from '../utils/voltage';
 
 const Resumen = () => {
   const { refreshKey } = useOutletContext();
-  const [metricas, setMetricas] = useState({ total_dispositivos: 0, online: 0, offline: 0, alarmas_activas: 0, consumo_total_kwh: 0 });
+  const [metricas, setMetricas] = useState({
+    total_dispositivos: 0,
+    online: 0,
+    offline: 0,
+    alarmas_activas: 0,
+    consumo_total_kwh: 0,
+    voltaje_promedio: null,
+    dispositivos_fuera_rango: 0,
+  });
   const [consumoHorario, setConsumoHorario] = useState([]);
   const [alertas, setAlertas] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -62,12 +71,23 @@ const Resumen = () => {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         <KpiCard label="Total medidores" valor={metricas.total_dispositivos} icon={Monitor} />
         <KpiCard label="Online" valor={metricas.online} icon={Wifi} />
         <KpiCard label="Offline" valor={metricas.offline} icon={WifiOff} />
         <KpiCard label="Alarmas activas" valor={metricas.alarmas_activas} icon={AlertTriangle} />
         <KpiCard label="Consumo total día" valor={metricas.consumo_total_kwh} unidad="kWh" icon={Zap} />
+        <KpiCard
+          label="Tensión de red"
+          valor={metricas.voltaje_promedio != null ? metricas.voltaje_promedio : '--'}
+          unidad="V"
+          icon={Activity}
+          estado={
+            metricas.dispositivos_fuera_rango > 0
+              ? { label: `${metricas.dispositivos_fuera_rango} fuera de rango`, color: 'red' }
+              : evaluarVoltaje(metricas.voltaje_promedio)
+          }
+        />
       </div>
 
       {/* Gráfica + Alertas */}

@@ -44,6 +44,7 @@ const ConsumoAgregadoChart = ({ datos = [] }) => {
               tick={{ fontSize: 12 }}
               stroke="#9ca3af"
               tickLine={false}
+              label={{ value: 'Hora del día', position: 'insideBottomRight', offset: -5, fontSize: 12, fill: '#6b7280' }}
             />
             <YAxis
               tick={{ fontSize: 12 }}

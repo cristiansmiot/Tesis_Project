@@ -6,6 +6,7 @@ from sqlalchemy import func, desc, and_
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 
+from app.config import settings
 from app.database import get_db
 from app.models.dispositivo import Dispositivo
 from app.models.medicion import Medicion
@@ -22,6 +23,13 @@ class ResumenGeneral(BaseModel):
     offline: int
     alarmas_activas: int
     consumo_total_kwh: float
+    # Indicador de tensión de la red según CREG 024/2015 (110 V ±10%):
+    # promedio de la última medición de cada dispositivo y cuántos están
+    # fuera del rango admisible. Si no hay mediciones, voltaje_promedio es None.
+    voltaje_promedio: Optional[float] = None
+    dispositivos_fuera_rango: int = 0
+    voltaje_min_creg: float = settings.voltaje_min
+    voltaje_max_creg: float = settings.voltaje_max
 
 
 class ConsumoHorario(BaseModel):
@@ -69,12 +77,30 @@ def obtener_resumen(db: Session = Depends(get_db)):
         .scalar()
     ) or 0.0
 
+    # Tensión de la red: última lectura de voltaje por dispositivo.
+    # Se descartan lecturas en 0 (nodo encendido pero sin línea AC) para no
+    # arrastrar el promedio ni contar falsos fuera-de-rango.
+    voltajes = [
+        v for (v,) in db.query(Medicion.voltaje_rms)
+        .join(subq, Medicion.id == subq.c.max_id)
+        .all()
+        if v and v > 0
+    ]
+    voltaje_promedio = round(sum(voltajes) / len(voltajes), 1) if voltajes else None
+    fuera_rango = sum(
+        1 for v in voltajes if v < settings.voltaje_min or v > settings.voltaje_max
+    )
+
     return ResumenGeneral(
         total_dispositivos=total,
         online=online,
         offline=offline,
         alarmas_activas=alarmas,
         consumo_total_kwh=round(consumo_total, 1),
+        voltaje_promedio=voltaje_promedio,
+        dispositivos_fuera_rango=fuera_rango,
+        voltaje_min_creg=settings.voltaje_min,
+        voltaje_max_creg=settings.voltaje_max,
     )
 
 

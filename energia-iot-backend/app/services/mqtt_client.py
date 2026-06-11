@@ -31,6 +31,8 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 
+from app.config import settings
+
 # Configurar logging
 logger = logging.getLogger("mqtt_client")
 logger.setLevel(logging.INFO)
@@ -175,7 +177,12 @@ class MQTTClient:
         for record in records:
             name = record.get("n")
             if name is None:
-                continue  # Registro base (solo bn/bt), sin campo de valor
+                # Registro base: conservar bt para mediciones diferidas.
+                # El firmware publica bt=0 en vivo (el backend asigna hora de
+                # recepción) y bt=epoch real cuando entrega backlog desde SD.
+                if "bt" in record:
+                    result["_bt"] = record["bt"]
+                continue
             if "v" in record:
                 result[name] = record["v"]
             elif "vb" in record:
@@ -331,6 +338,20 @@ class MQTTClient:
                 dispositivo.conectado = True
                 dispositivo.ultima_conexion = datetime.now(timezone.utc)
 
+                # Timestamp: por defecto la hora de recepción. Si el registro
+                # base SenML trae bt absoluto (> 2^28 según RFC 8428 sec 4.5.3)
+                # es una medición diferida del backlog SD del nodo y se respeta
+                # su hora original.
+                ts_medicion = datetime.now(timezone.utc)
+                bt = data.get("_bt")
+                if bt is not None:
+                    try:
+                        bt = float(bt)
+                        if bt > 2**28:
+                            ts_medicion = datetime.fromtimestamp(bt, tz=timezone.utc)
+                    except (TypeError, ValueError, OSError):
+                        pass
+
                 # Crear medición mapeando campos del JSON a campos de la BD
                 medicion = Medicion(
                     dispositivo_id=dispositivo.id,
@@ -344,7 +365,7 @@ class MQTTClient:
                     frecuencia=frequency,
                     energia_activa=active_energy,
                     energia_reactiva=reactive_energy,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=ts_medicion,
                 )
 
                 db.add(medicion)
@@ -359,11 +380,11 @@ class MQTTClient:
                     f"PF={power_factor:.2f}"
                 )
 
-                # Auto-generar alertas por voltaje según CREG 024/2015
-                # Nominal 120V, tolerancia ±10% → rango 108V - 132V
-                VOLTAJE_NOMINAL = 120.0
-                VOLTAJE_MIN = VOLTAJE_NOMINAL * 0.9   # 108V
-                VOLTAJE_MAX = VOLTAJE_NOMINAL * 1.1   # 132V
+                # Auto-generar alertas por voltaje según CREG 024/2015.
+                # Umbrales centralizados en config (110 V ±10% → 99–121 V por
+                # defecto, ajustables por variable de entorno según la zona).
+                VOLTAJE_MIN = settings.voltaje_min
+                VOLTAJE_MAX = settings.voltaje_max
 
                 if voltage > 0 and (voltage > VOLTAJE_MAX or voltage < VOLTAJE_MIN):
                     from app.models.evento import Evento

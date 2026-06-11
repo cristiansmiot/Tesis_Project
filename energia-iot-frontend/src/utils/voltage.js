@@ -1,15 +1,17 @@
 /**
- * Lógica de umbrales de voltaje según CREG 024 de 2015
- * Redes de distribución en Colombia — usuarios residenciales
- * Voltaje nominal: 110V (120V en algunas zonas)
- * Tolerancia: ±10% del valor nominal
+ * Umbrales de voltaje según CREG 024 de 2015 (redes de distribución, Colombia).
+ * Nominal residencial monofásico acordado con el director de tesis: 110 V.
+ * Tolerancia ±10% → rango admisible 99 V – 121 V.
+ * Estos límites deben coincidir con los del backend (services/mqtt_client.py),
+ * que es quien genera los eventos persistidos; aquí solo se colorea la UI.
  */
 
-const VOLTAJE_NOMINAL = 120;
+const VOLTAJE_NOMINAL = 110;
 const TOLERANCIA_PCT = 10;
 
-export const VOLTAJE_MIN = VOLTAJE_NOMINAL * (1 - TOLERANCIA_PCT / 100); // 108V
-export const VOLTAJE_MAX = VOLTAJE_NOMINAL * (1 + TOLERANCIA_PCT / 100); // 132V
+// Redondeo a 2 decimales: 110 * 1.1 da 121.00000000000001 en punto flotante
+export const VOLTAJE_MIN = Math.round(VOLTAJE_NOMINAL * (100 - TOLERANCIA_PCT)) / 100; // 99V
+export const VOLTAJE_MAX = Math.round(VOLTAJE_NOMINAL * (100 + TOLERANCIA_PCT)) / 100; // 121V
 
 const SIN_AC = { estado: 'sin_ac', color: 'gray', label: 'Sin AC' };
 

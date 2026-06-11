@@ -36,8 +36,23 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
     
+    # Calidad de tensión (CREG 024/2015)
+    # Nominal residencial monofásico acordado con el director: 110 V ±10%.
+    # Configurable por entorno porque algunas zonas del país operan a 120 V.
+    VOLTAJE_NOMINAL: float = 110.0
+    VOLTAJE_TOLERANCIA_PCT: float = 10.0
+
     # Logs
     LOG_LEVEL: str = "INFO"
+
+    @property
+    def voltaje_min(self) -> float:
+        # round() evita residuos de punto flotante (110 * 1.1 = 121.00000000000001)
+        return round(self.VOLTAJE_NOMINAL * (1 - self.VOLTAJE_TOLERANCIA_PCT / 100), 2)
+
+    @property
+    def voltaje_max(self) -> float:
+        return round(self.VOLTAJE_NOMINAL * (1 + self.VOLTAJE_TOLERANCIA_PCT / 100), 2)
     
     @property
     def cors_origins_list(self) -> List[str]:

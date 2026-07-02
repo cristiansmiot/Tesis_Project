@@ -1,4 +1,4 @@
-"""ROUTER: Salud - Métricas de transmisión y salud del nodo ESP32"""
+"""Salud - Métricas de transmisión y salud del nodo ESP32"""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc

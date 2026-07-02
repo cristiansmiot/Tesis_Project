@@ -43,7 +43,7 @@ def registrar_accion(
         )
         db.add(log)
         db.commit()
-        logger.debug(f"📝 Auditoría: {accion} por {usuario_email or 'sistema'}")
+        logger.debug(f"Auditoría: {accion} por {usuario_email or 'sistema'}")
     except Exception as e:
-        logger.error(f"❌ Error registrando auditoría: {e}")
+        logger.error(f"Error registrando auditoría: {e}")
         db.rollback()

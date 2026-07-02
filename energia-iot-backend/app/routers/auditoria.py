@@ -1,4 +1,4 @@
-"""ROUTER: Auditoría - Registro de actividades del sistema"""
+"""Auditoría - Registro de actividades del sistema"""
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session

@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 Iniciando aplicación...")
-    logger.info(f"📌 Entorno: {settings.ENVIRONMENT}")
-    logger.info(f"📌 Base de datos: {'PostgreSQL' if not settings.USE_SQLITE else 'SQLite'}")
+    logger.info("Iniciando aplicación...")
+    logger.info(f"Entorno: {settings.ENVIRONMENT}")
+    logger.info(f"Base de datos: {'PostgreSQL' if not settings.USE_SQLITE else 'SQLite'}")
     try:
         init_db()
         # Crear usuario admin por defecto si no existe
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
         finally:
             db_session.close()
     except Exception as e:
-        logger.error(f"❌ Error inicializando BD: {e} (la API arrancará sin BD)")
+        logger.error(f"Error inicializando BD: {e} (la API arrancará sin BD)")
         # No raise: permitir que la app suba y responda /health aunque BD falle al inicio
 
     # === Iniciar cliente MQTT ===
@@ -64,22 +64,22 @@ async def lifespan(app: FastAPI):
         )
         client.set_db_session_factory(get_session_local())
         client.start()
-        logger.info(f"📡 Cliente MQTT conectando a {mqtt_broker}:{mqtt_port} (TLS={'sí' if mqtt_use_tls else 'no'})")
+        logger.info(f"Cliente MQTT conectando a {mqtt_broker}:{mqtt_port} (TLS={'sí' if mqtt_use_tls else 'no'})")
     except Exception as e:
-        logger.warning(f"⚠️ No se pudo iniciar MQTT: {e} (la API seguirá funcionando sin MQTT)")
+        logger.warning(f"No se pudo iniciar MQTT: {e} (la API seguirá funcionando sin MQTT)")
 
-    logger.info("✅ Aplicación lista")
+    logger.info("Aplicación lista")
     yield
 
     # === Detener cliente MQTT ===
     mqtt = get_mqtt_client()
     if mqtt:
         mqtt.stop()
-    logger.info("🛑 Aplicación cerrada")
+    logger.info("Aplicación cerrada")
 
 
 app = FastAPI(
-    title="⚡ API Medidor de Energía IoT",
+    title="API Medidor de Energía IoT",
     description="Sistema IoT para medición de energía - Tesis Maestría Javeriana",
     version="1.0.0",
     lifespan=lifespan,
@@ -107,7 +107,7 @@ app.include_router(admin_router, prefix=settings.API_PREFIX)
 
 @app.get("/", tags=["Root"])
 def root():
-    return {"nombre": "API Medidor de Energía IoT", "version": "1.0.0", "docs": "/docs", "estado": "✅ Operativo"}
+    return {"nombre": "API Medidor de Energía IoT", "version": "1.0.0", "docs": "/docs", "estado": "Operativo"}
 
 
 @app.get("/health", tags=["Health"])

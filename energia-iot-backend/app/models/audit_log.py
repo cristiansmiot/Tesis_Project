@@ -1,4 +1,4 @@
-"""MODELO: AuditLog - Registro de auditoría del sistema"""
+"""AuditLog - Registro de auditoría del sistema"""
 from sqlalchemy import Column, Integer, String, DateTime, Text
 from sqlalchemy.sql import func
 from app.database import Base

@@ -1,4 +1,4 @@
-"""MODELO: Usuario - Autenticación y roles del sistema"""
+"""Usuario - Autenticación y roles del sistema"""
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func

@@ -1,4 +1,4 @@
-"""ROUTER: Comandos - Envío de comandos a dispositivos via MQTT"""
+"""Comandos - Envío de comandos a dispositivos via MQTT"""
 import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -125,7 +125,7 @@ def enviar_comando(
         if result.rc != 0:
             raise Exception(f"MQTT publish failed with rc={result.rc}")
     except Exception as e:
-        logger.error(f"❌ Error publicando comando MQTT: {e}")
+        logger.error(f"Error publicando comando MQTT: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error enviando comando: {str(e)}",
@@ -139,7 +139,7 @@ def enviar_comando(
         ip_address=request.client.host if request.client else None,
     )
 
-    logger.info(f"📤 Comando '{datos.comando}' enviado a {device_id} por {usuario.email}")
+    logger.info(f"Comando '{datos.comando}' enviado a {device_id} por {usuario.email}")
 
     return ComandoResponse(
         exito=True,

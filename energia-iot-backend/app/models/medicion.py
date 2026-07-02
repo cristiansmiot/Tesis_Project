@@ -1,4 +1,4 @@
-"""MODELO: Medicion - Representa una lectura de energía del ADE9153A"""
+"""Medicion - Representa una lectura de energía del ADE9153A"""
 from sqlalchemy import Column, Integer, Float, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func

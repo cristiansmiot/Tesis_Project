@@ -1,4 +1,4 @@
-"""MODELO: Evento - Alertas y eventos del sistema"""
+"""Evento - Alertas y eventos del sistema"""
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.sql import func
 from app.database import Base

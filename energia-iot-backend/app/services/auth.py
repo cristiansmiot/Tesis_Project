@@ -178,11 +178,11 @@ def create_default_admin(db: Session):
         admins = db.query(Usuario).filter(Usuario.rol == "Administrador").all()
         for admin in admins:
             admin.rol = "super_admin"
-            logger.info(f"🔄 Rol migrado: {admin.email} Administrador → super_admin")
+            logger.info(f"Rol migrado: {admin.email} Administrador → super_admin")
         operadores = db.query(Usuario).filter(Usuario.rol == "Operador").all()
         for op in operadores:
             op.rol = "operador"
-            logger.info(f"🔄 Rol migrado: {op.email} Operador → operador")
+            logger.info(f"Rol migrado: {op.email} Operador → operador")
         if admins or operadores:
             db.commit()
         return
@@ -197,4 +197,4 @@ def create_default_admin(db: Session):
     )
     db.add(admin)
     db.commit()
-    logger.info("👤 Usuario super_admin creado: admin@medidoriot.com / admin123")
+    logger.info("Usuario super_admin creado: admin@medidoriot.com / admin123")

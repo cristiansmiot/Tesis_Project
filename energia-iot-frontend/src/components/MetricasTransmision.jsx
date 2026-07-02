@@ -53,7 +53,7 @@ const MetricasTransmision = ({ metricas }) => {
   if (!metricas) {
     return (
       <div className="bg-white rounded-xl shadow-md p-6">
-        <h3 className="text-lg font-semibold text-gray-700 mb-2">📡 Métricas de Transmisión</h3>
+        <h3 className="text-lg font-semibold text-gray-700 mb-2">Métricas de Transmisión</h3>
         <p className="text-sm text-gray-400">Sin datos disponibles. El nodo aún no ha enviado /estado.</p>
       </div>
     );
@@ -72,7 +72,7 @@ const MetricasTransmision = ({ metricas }) => {
   return (
     <div className="bg-white rounded-xl shadow-md p-6 space-y-5">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-700">📡 Métricas de Transmisión</h3>
+        <h3 className="text-lg font-semibold text-gray-700">Métricas de Transmisión</h3>
         <span className="text-xs text-gray-400">Últimas {ventana_horas}h</span>
       </div>
 

@@ -1,4 +1,4 @@
-"""MODELO: NodoSalud - Historial de salud y métricas de transmisión del nodo ESP32"""
+"""NodoSalud - Historial de salud y métricas de transmisión del nodo ESP32"""
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func

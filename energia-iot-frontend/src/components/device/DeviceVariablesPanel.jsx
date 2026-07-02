@@ -86,7 +86,7 @@ const DeviceVariablesPanel = ({ medicion, saludData, reconciliacion }) => {
           <>
             {saludData.ac_ok === false && (
               <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
-                <span className="font-semibold">⚠ Sin línea AC</span>
+                <span className="font-semibold">Sin línea AC</span>
                 <span className="text-amber-600">— las métricas eléctricas no son aplicables.</span>
               </div>
             )}
@@ -133,7 +133,7 @@ const DeviceVariablesPanel = ({ medicion, saludData, reconciliacion }) => {
             Reconciliacion de energia
           </h4>
           {reconciliacion.reset_detectado ? (
-            <p className="text-sm text-amber-600">⚠ Reset de firmware detectado — referencia no disponible</p>
+            <p className="text-sm text-amber-600">Reset de firmware detectado — referencia no disponible</p>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="border border-gray-100 rounded-lg p-3">

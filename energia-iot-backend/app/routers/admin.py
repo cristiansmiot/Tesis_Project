@@ -1,4 +1,4 @@
-"""ROUTER: Admin - Diagnóstico y seed de base de datos"""
+"""Admin - Diagnóstico y seed de base de datos"""
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect

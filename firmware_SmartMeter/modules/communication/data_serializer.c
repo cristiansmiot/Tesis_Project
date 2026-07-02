@@ -3,8 +3,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include "ade9153a_init.h"
-#include "meter_config.h"   // METER_MQTT_CLIENT_ID, umbrales AC/carga, METER_FW_VERSION
+#include "meter_config.h"   // umbrales AC/carga, METER_FW_VERSION
 #include "meter_data.h"
+#include "mqtt_topics.h"    // mqtt_topics_device_id() para el bn SenML
 #include "node_health.h"    // node_health_get_rssi_dbm(), get_msg_tx(), get_reconnects()
 #include "pq_monitor.h"     // PQ_FLAG_SAG, PQ_FLAG_SWELL, PQ_FLAG_FREQ_OOR, PQ_FLAG_OVERTEMP
 #include "sim7080g_init.h"  // sim7080g_get_imei()
@@ -143,7 +144,7 @@ esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
     // Unidades SenML: V, A, W, VAR, VA, / (adim.), Hz, Wh, Cel, count.
     const int len = snprintf(
         out, out_len,
-        "[{\"bn\":\"urn:dev:serial:" METER_MQTT_CLIENT_ID ":/\",\"bt\":%.3f},"
+        "[{\"bn\":\"urn:dev:serial:%s:/\",\"bt\":%.3f},"
         "{\"n\":\"vrms\",\"u\":\"V\",\"v\":%.3f},"
         "{\"n\":\"irms\",\"u\":\"A\",\"v\":%.4f},"
         "{\"n\":\"p_act\",\"u\":\"W\",\"v\":%.3f},"
@@ -154,6 +155,7 @@ esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
         "{\"n\":\"e_act\",\"u\":\"Wh\",\"v\":%.4f},"
         "{\"n\":\"temp\",\"u\":\"Cel\",\"v\":%.2f},"
         "{\"n\":\"pq\",\"u\":\"count\",\"v\":%lu}]",
+        mqtt_topics_device_id(),
         bt,
         (double)snap->vrms,
         (double)snap->irms_a,
@@ -211,7 +213,7 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
 
     const int len = snprintf(
         out, out_len,
-        "[{\"bn\":\"urn:dev:serial:" METER_MQTT_CLIENT_ID ":/\",\"bt\":%.3f},"
+        "[{\"bn\":\"urn:dev:serial:%s:/\",\"bt\":%.3f},"
         "{\"n\":\"online\",\"vb\":true},"
         "{\"n\":\"ac\",\"vb\":%s},"
         "{\"n\":\"carga\",\"vb\":%s},"
@@ -228,6 +230,7 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
         "{\"n\":\"rssi_dbm\",\"u\":\"dBm\",\"v\":%d},"
         "{\"n\":\"imei\",\"vs\":\"%s\"},"
         "{\"n\":\"fw\",\"vs\":\"" METER_FW_VERSION "\"}]",
+        mqtt_topics_device_id(),
         bt,
         ac_ok ? "true" : "false",
         carga ? "true" : "false",
@@ -282,10 +285,11 @@ esp_err_t data_serializer_build_senml_alerta(const MeterData_t *snap,
 
     const int len = snprintf(
         out, out_len,
-        "[{\"bn\":\"urn:dev:serial:" METER_MQTT_CLIENT_ID ":/\",\"bt\":%.3f},"
+        "[{\"bn\":\"urn:dev:serial:%s:/\",\"bt\":%.3f},"
         "{\"n\":\"tipo\",\"vs\":\"%s\"},"
         "{\"n\":\"vrms\",\"u\":\"V\",\"v\":%.3f},"
         "{\"n\":\"pq\",\"u\":\"count\",\"v\":%lu}]",
+        mqtt_topics_device_id(),
         bt,
         tipo,
         (double)snap->vrms,

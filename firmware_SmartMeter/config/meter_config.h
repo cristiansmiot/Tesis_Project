@@ -159,24 +159,24 @@
 
 #define METER_MQTT_HOST                        "shinkansen.proxy.rlwy.net"
 #define METER_MQTT_PORT                        58954U
-#define METER_MQTT_CLIENT_ID                   "medidor_cristian_001"
 #define METER_MQTT_USERNAME                    "medidor_iot"
 #define METER_MQTT_PASSWORD                    "Colombia2026$"
 
-// -- Topics MQTT (SenML RFC 8428) ---------------------------------------------
-// /datos   : mediciones electricas              ? QoS 0, retain=0, cada 60 s
-// /estado  : salud del nodo                     ? QoS 1, retain=1, cada 5 min
-// /alerta  : eventos de calidad de potencia     ? QoS 1, retain=0, event-driven
-// /conexion: indicador LWT online/offline (txt) ? QoS 1, retain=1
-#define METER_MQTT_TOPIC_DATA                  "medidor/ESP32-001/datos"
-#define METER_MQTT_TOPIC_ESTADO                "medidor/ESP32-001/estado"
-#define METER_MQTT_TOPIC_ALERTA                "medidor/ESP32-001/alerta"
-#define METER_MQTT_TOPIC_CONEXION              "medidor/ESP32-001/conexion"
-#define METER_MQTT_TOPIC_CMD                   "medidor/ESP32-001/cmd"
+// ── Identidad del nodo (plug and play) ──────────────────────────────────
+// Los topics medidor/<id>/{datos,estado,alerta,conexion,cmd} y el CLIENTID
+// se construyen en runtime desde el IMEI del SIM7080G (ver mqtt_topics.h):
+// un mismo binario sirve para toda la flota y el backend auto-registra
+// cada IMEI nuevo. El fallback solo se usa si el IMEI no se pudo leer.
+// QoS/retain por topic:
+// /datos   : QoS 0, retain=0, cada 60 s
+// /estado  : QoS 1, retain=1, cada 5 min
+// /alerta  : QoS 1, retain=0, event-driven
+// /conexion: QoS 1, retain=1 (online / LWT offline)
+#define METER_MQTT_ID_FROM_IMEI                1
+#define METER_MQTT_DEVICE_ID_FALLBACK          "ESP32-001"
 
 // LWT (Last Will and Testament): el broker publica "offline" en /conexion
 // si el nodo cae sin desconectarse correctamente (sin AT+SMDISC explicito).
-#define METER_MQTT_LWT_TOPIC                   METER_MQTT_TOPIC_CONEXION
 #define METER_MQTT_LWT_QOS                     1
 #define METER_MQTT_LWT_RETAIN                  1
 

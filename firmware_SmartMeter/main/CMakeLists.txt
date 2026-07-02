@@ -24,6 +24,7 @@ set(SRCS
     "../modules/diagnostics/fault_handler.c"
     "../modules/diagnostics/task_monitor.c"
     "../modules/communication/mqtt_client.c"
+    "../modules/communication/mqtt_topics.c"
     "../modules/communication/data_serializer.c"
     "../modules/communication/node_health.c"
     "../modules/ui/display_manager.c"

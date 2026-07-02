@@ -52,13 +52,15 @@ Lo que ya funciona hoy:
 
 Lo que falta para que conectar el medidor N+1 sea solo "flashear y encender":
 
-1. **Topics derivados del IMEI en el firmware** (cambio principal). Hoy
-   `METER_MQTT_TOPIC_*` y `METER_MQTT_CLIENT_ID` son constantes de
-   compilación (`ESP32-001`, `medidor_cristian_001`): dos nodos con el mismo
-   binario colisionarían. Propuesta: tras leer el IMEI en el arranque de
-   task_communication, construir en runtime
-   `medidor/<IMEI>/{datos,estado,alerta,conexion,cmd}` y usar el IMEI como
-   CLIENTID. Un único binario sirve para toda la flota.
+1. **Topics derivados del IMEI en el firmware** — **HECHO (2026-07-02)**.
+   `modules/communication/mqtt_topics.c` construye en runtime
+   `medidor/<IMEI>/{datos,estado,alerta,conexion,cmd}` y usa el IMEI como
+   CLIENTID (flag `METER_MQTT_ID_FROM_IMEI`, fallback `ESP32-001` si el
+   IMEI no se pudo leer). Un único binario sirve para toda la flota.
+   **Efecto al flashear**: el nodo actual pasará a reportar con su IMEI
+   (860016040126034) y el backend lo auto-registrará como dispositivo
+   nuevo; el histórico de ESP32-001 queda intacto bajo el id viejo (se
+   puede renombrar el nuevo desde Editar).
 2. **Credencial MQTT por dispositivo**: username = IMEI, clave única
    grabada en NVS durante el aprovisionamiento (no en el código). El ACL ya
    quedó preparado con la regla `pattern readwrite medidor/%u/#`

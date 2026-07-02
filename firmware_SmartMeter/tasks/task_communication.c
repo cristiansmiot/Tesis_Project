@@ -16,6 +16,7 @@
 #include "task_calibration.h"   // task_calibration_get_status(), CALIB_STATUS_*
 #include "task_monitor.h"
 #include "../modules/communication/mqtt_client.h"
+#include "../modules/communication/mqtt_topics.h"
 #include "rtos_app_config.h"
 #include "sim7080g_init.h"
 #include "logger.h"
@@ -60,7 +61,7 @@ static void task_communication_apply_network_time(void)
 static esp_err_t task_communication_backlog_publish(const char *line, void *ctx)
 {
     (void)ctx;
-    return mqtt_client_publish(METER_MQTT_TOPIC_DATA, line,
+    return mqtt_client_publish(mqtt_topics_datos(), line,
                                METER_MQTT_PUBLISH_QOS, 0);
 }
 
@@ -194,6 +195,10 @@ static void task_communication(void *pvParameters)
                 goto cycle_delay;
             }
 
+            // Con el modem arriba el IMEI ya se leyo: fijar la identidad
+            // MQTT del nodo (topics medidor/<IMEI>/*) antes de conectar.
+            (void)mqtt_topics_init();
+
             if (!sim7080g_is_pdp_ready()) {
                 node_health_cellular_attempt_inc();
                 if (sim7080g_recover_network() != ESP_OK) {
@@ -233,7 +238,7 @@ static void task_communication(void *pvParameters)
             // El broker publica "offline" (LWT) si el nodo cae sin SMDISC.
             {
                 const esp_err_t con_err = mqtt_client_publish(
-                    METER_MQTT_TOPIC_CONEXION, "online",
+                    mqtt_topics_conexion(), "online",
                     METER_MQTT_LWT_QOS, METER_MQTT_LWT_RETAIN);
                 if (con_err != ESP_OK) {
                     LOG_WARN(TAG, "/conexion online publish failed: %s",
@@ -249,10 +254,10 @@ static void task_communication(void *pvParameters)
 
             // ?????? /cmd: suscribirse al topico de comandos remotos ??????????????????????????????
             {
-                const esp_err_t sub_err = mqtt_client_subscribe(METER_MQTT_TOPIC_CMD);
+                const esp_err_t sub_err = mqtt_client_subscribe(mqtt_topics_cmd());
                 if (sub_err != ESP_OK) {
                     LOG_WARN(TAG, "subscribe to %s failed: %s",
-                             METER_MQTT_TOPIC_CMD, esp_err_to_name(sub_err));
+                             mqtt_topics_cmd(), esp_err_to_name(sub_err));
                     s_subscribed = false;
                 } else {
                     s_subscribed = true;
@@ -271,7 +276,7 @@ static void task_communication(void *pvParameters)
         }
 
         {
-            const esp_err_t pub_err = mqtt_client_publish(METER_MQTT_TOPIC_DATA,
+            const esp_err_t pub_err = mqtt_client_publish(mqtt_topics_datos(),
                                                           payload,
                                                           METER_MQTT_PUBLISH_QOS,
                                                           METER_MQTT_PUBLISH_RETAIN);
@@ -299,7 +304,7 @@ static void task_communication(void *pvParameters)
         }
 
         node_health_msg_tx_inc();
-        LOG_INFO(TAG, "/datos SenML publicado topic=%s", METER_MQTT_TOPIC_DATA);
+        LOG_INFO(TAG, "/datos SenML publicado topic=%s", mqtt_topics_datos());
 
         // ── Drenar backlog SD acumulado durante caidas de MQTT ───────────
         // Lotes pequenos por ciclo para no retrasar la telemetria en vivo.
@@ -321,7 +326,7 @@ static void task_communication(void *pvParameters)
             if (data_serializer_build_senml_alerta(&snap, snap.pq_status,
                                                    payload, sizeof(payload)) == ESP_OK) {
                 const esp_err_t al_err = mqtt_client_publish(
-                    METER_MQTT_TOPIC_ALERTA, payload, 1, 0);
+                    mqtt_topics_alerta(), payload, 1, 0);
                 if (al_err != ESP_OK) {
                     LOG_WARN(TAG, "/alerta publish failed: %s", esp_err_to_name(al_err));
                 } else {
@@ -355,7 +360,7 @@ static void task_communication(void *pvParameters)
                                                        payload,
                                                        sizeof(payload)) == ESP_OK) {
                     const esp_err_t st_err = mqtt_client_publish(
-                        METER_MQTT_TOPIC_ESTADO, payload,
+                        mqtt_topics_estado(), payload,
                         METER_MQTT_LWT_QOS, METER_MQTT_LWT_RETAIN);
                     if (st_err != ESP_OK) {
                         LOG_WARN(TAG, "/estado publish failed: %s", esp_err_to_name(st_err));

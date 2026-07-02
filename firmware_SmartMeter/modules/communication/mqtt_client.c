@@ -10,6 +10,7 @@
 #if (METER_MQTT_USE_TLS != 0)
 #include "mqtt_ca_cert.h"
 #endif
+#include "mqtt_topics.h"
 #include "node_health.h"
 #include "sim7080g_hal.h"
 #include "sim7080g_init.h"
@@ -358,7 +359,9 @@ static esp_err_t mqtt_client_configure_profile(void)
                                         1U, "SMSSL off", true);
 #endif
 
-    (void)snprintf(cmd, sizeof(cmd), AT_SMCONF_CLIENT_FMT, METER_MQTT_CLIENT_ID);
+    // CLIENTID = device_id (IMEI): unico por modem, evita que dos nodos
+    // con el mismo binario se expulsen mutuamente de la sesion MQTT.
+    (void)snprintf(cmd, sizeof(cmd), AT_SMCONF_CLIENT_FMT, mqtt_topics_device_id());
     err = mqtt_client_send_cmd_with_log(cmd,
                                         METER_SIM7080G_AT_TIMEOUT_MS,
                                         METER_SIM7080G_MAX_RETRIES,
@@ -419,7 +422,7 @@ static esp_err_t mqtt_client_configure_profile(void)
     if (!s_skip_lwt_config) {
         char lwt_cmd[128];
         (void)snprintf(lwt_cmd, sizeof(lwt_cmd),
-                       AT_SMCONF_TOPICWILL_FMT, METER_MQTT_LWT_TOPIC);
+                       AT_SMCONF_TOPICWILL_FMT, mqtt_topics_conexion());
         (void)mqtt_client_send_lwt_cmd(lwt_cmd, "SMCONF TOPICWILL");
         (void)mqtt_client_send_lwt_cmd(AT_SMCONF_MSGWILL, "SMCONF MESSAGEWILL");
         (void)mqtt_client_send_lwt_cmd(AT_SMCONF_QOSWILL, "SMCONF QOSWILL");

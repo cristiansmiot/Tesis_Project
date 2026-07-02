@@ -5,6 +5,7 @@
 #include <string.h>
 #include "menu_handler.h"
 #include "meter_config.h"
+#include "mqtt_topics.h"
 #include "oled_driver.h"
 
 static bool s_initialized;
@@ -208,7 +209,9 @@ esp_err_t display_manager_show_splash(void)
     (void)display_manager_write_line(1U, "  MEDIDOR");
     (void)display_manager_write_line(2U, "  INTELIGENTE");
     (void)display_manager_write_line(3U, "");
-    (void)display_manager_write_line(4U, "ID: %s", METER_MQTT_CLIENT_ID);
+    // En el splash el modem aun no reporto IMEI: se muestra el fallback y
+    // el id definitivo aparece en el menu una vez el nodo registra en red.
+    (void)display_manager_write_line(4U, "ID: %s", mqtt_topics_device_id());
     (void)display_manager_write_line(5U, "");
     (void)display_manager_write_line(6U, "  PUJ  FW %s", METER_FW_VERSION);
     (void)display_manager_write_line(7U, "  INICIANDO...");

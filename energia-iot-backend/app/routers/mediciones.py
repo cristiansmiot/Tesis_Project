@@ -8,10 +8,12 @@ from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.models.dispositivo import Dispositivo
 from app.models.medicion import Medicion
+from app.models.usuario import Usuario
 from app.schemas.medicion import (
     MedicionCreate, MedicionResponse, MedicionResumen,
     MedicionHistorico, MedicionPunto,
 )
+from app.services.auth import require_operador_or_admin
 
 router = APIRouter(prefix="/mediciones", tags=["Mediciones"])
 
@@ -33,7 +35,14 @@ def obtener_medicion(medicion_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=MedicionResponse, status_code=status.HTTP_201_CREATED)
-def crear_medicion(data: MedicionCreate, db: Session = Depends(get_db)):
+def crear_medicion(
+    data: MedicionCreate,
+    db: Session = Depends(get_db),
+    _usuario: Usuario = Depends(require_operador_or_admin),
+):
+    # La vía normal de ingesta es MQTT (autenticada en el broker). Este POST
+    # existe para pruebas y carga manual: sin candado, cualquiera podía
+    # inyectar mediciones falsas a nombre de un medidor real.
     dispositivo = db.query(Dispositivo).filter(Dispositivo.device_id == data.device_id).first()
     if not dispositivo:
         dispositivo = Dispositivo(device_id=data.device_id, nombre=f"Auto-registrado: {data.device_id}")

@@ -30,15 +30,26 @@
 user medidor_iot
 topic readwrite medidor/#
 
-# ── Notas para expansion futura ───────────────────────────────────────────────
-# Cuando se agreguen mas dispositivos, crear un usuario por dispositivo
-# y restringir sus topics de escritura al device_id correspondiente:
+# ── Esquema multi-medidor (plug and play) ─────────────────────────────────────
+# Para escalar a N medidores sin editar este archivo por cada equipo, usar la
+# regla `pattern` de Mosquitto: %u se sustituye por el username autenticado.
+# Si cada nodo se conecta con username = su IMEI (el firmware ya lo lee del
+# SIM7080G), cada medidor queda confinado a su propia rama de topics:
 #
-# user medidor_ESP32_002
-# topic write  medidor/ESP32-002/#
-# topic read   medidor/ESP32-002/#
+#   pattern readwrite medidor/%u/#
 #
-# Para un usuario de solo lectura (dashboard externo, auditoría):
+# Aprovisionar un medidor nuevo se reduce a un comando en el broker:
+#   mosquitto_passwd -b /mosquitto/config/passwd <IMEI> <clave-unica>
+# y grabar esa credencial en el nodo. Asi ningun medidor puede publicar a
+# nombre de otro (con el usuario compartido actual, un nodo comprometido
+# podria suplantar a toda la flota).
 #
-# user dashboard_reader
-# topic read medidor/#
+# El backend conserva un usuario propio con lectura global y escritura solo
+# en el topic de comandos:
+#
+# user backend_plataforma
+# topic read  medidor/#
+# topic write medidor/+/cmd
+#
+# Para activar el esquema: descomentar el `pattern`, crear los usuarios por
+# IMEI, crear backend_plataforma y retirar el usuario compartido medidor_iot.

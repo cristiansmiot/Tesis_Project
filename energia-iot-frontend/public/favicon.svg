@@ -1,3 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <text y=".9em" font-size="90">⚡</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Smiot — medidor de energía: dial de gauge con aguja y marca de rayo -->
+  <rect width="64" height="64" rx="14" fill="#1d4ed8"/>
+  <!-- arco del dial -->
+  <path d="M 14 42 A 20 20 0 1 1 50 42" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <!-- marcas del dial -->
+  <line x1="32" y1="12" x2="32" y2="17" stroke="#bfdbfe" stroke-width="3" stroke-linecap="round"/>
+  <line x1="17" y1="21" x2="20.5" y2="24.5" stroke="#bfdbfe" stroke-width="3" stroke-linecap="round"/>
+  <line x1="47" y1="21" x2="43.5" y2="24.5" stroke="#bfdbfe" stroke-width="3" stroke-linecap="round"/>
+  <!-- aguja -->
+  <line x1="32" y1="38" x2="43" y2="26" stroke="#fbbf24" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="32" cy="38" r="4.5" fill="#ffffff"/>
+  <!-- rayo pequeño bajo el dial -->
+  <path d="M 30 46 L 36 46 L 32 52 L 38 52 L 28 62 L 31 54 L 26 54 Z" fill="#fbbf24" transform="scale(0.85) translate(6 3)"/>
 </svg>

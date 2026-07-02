@@ -12,9 +12,16 @@ from app.models.nodo_salud import NodoSalud
 from app.models.usuario import Usuario
 from app.models.evento import Evento
 from app.models.audit_log import AuditLog
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, require_super_admin
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+# Candado a nivel de router: TODOS los endpoints de /admin exigen rol
+# super_admin. Antes seed/limpiar/diagnostico quedaron públicos y cualquiera
+# podía sembrar datos falsos o borrar dispositivos de producción.
+router = APIRouter(
+    prefix="/admin",
+    tags=["Admin"],
+    dependencies=[Depends(require_super_admin)],
+)
 
 _RESET_TOKEN = "RESET-2026-PROD"
 

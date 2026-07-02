@@ -10,7 +10,7 @@
  * junto con el boton de cerrar sesion.
  */
 import { NavLink } from 'react-router-dom';
-import { Home, Gauge, Bell, FileText, User, LogOut, Cpu, Users } from 'lucide-react';
+import { Home, Gauge, Bell, FileText, User, LogOut, Users } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -40,11 +40,11 @@ const Sidebar = () => {
       {/* Logo */}
       <div className="px-5 py-6 flex items-center gap-3">
         <div className="p-2 bg-blue-600 rounded-lg">
-          <Cpu className="w-6 h-6 text-white" />
+          <Gauge className="w-6 h-6 text-white" />
         </div>
         <div>
-          <h1 className="text-white font-bold text-sm leading-tight">Medidor Inteligente</h1>
-          <span className="text-blue-300 text-xs">IoT</span>
+          <h1 className="text-white font-bold text-sm leading-tight">Smiot</h1>
+          <span className="text-blue-300 text-xs">Medición inteligente de energía</span>
         </div>
       </div>
 

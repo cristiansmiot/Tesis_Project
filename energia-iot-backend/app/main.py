@@ -27,6 +27,14 @@ async def lifespan(app: FastAPI):
     logger.info("Iniciando aplicación...")
     logger.info(f"Entorno: {settings.ENVIRONMENT}")
     logger.info(f"Base de datos: {'PostgreSQL' if not settings.USE_SQLITE else 'SQLite'}")
+
+    # Los JWT se firman con SECRET_KEY: si en producción sigue el valor de
+    # desarrollo, cualquiera que lea el repo puede forjar tokens de admin.
+    if "desarrollo" in settings.SECRET_KEY and settings.ENVIRONMENT != "development":
+        logger.critical(
+            "SECRET_KEY sigue en su valor por defecto: definir la variable "
+            "de entorno SECRET_KEY en Railway (openssl rand -hex 32)"
+        )
     try:
         init_db()
         # Crear usuario admin por defecto si no existe

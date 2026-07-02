@@ -225,9 +225,19 @@ class MQTTClient:
             device_id = parts[1]  # ej: "ESP32-001"
             msg_type = parts[2]   # ej: "datos", "estado", "alerta", "conexion"
 
+            # Mensajes retained: el broker los reenvía al (re)suscribirse,
+            # pero pueden ser de hace días (p. ej. un /estado "online" de un
+            # nodo que murió después). Tomarlos como tráfico fresco revivía
+            # medidores apagados en cada reinicio del backend, así que solo
+            # cuentan para conexión los mensajes en vivo.
+            es_retained = bool(getattr(msg, "retain", False))
+
             # /conexion usa texto plano ("online" / "offline"), no JSON.
             # Se procesa directamente con el raw string.
             if msg_type == "conexion":
+                if es_retained:
+                    logger.debug(f"/conexion retained de {device_id} ignorado")
+                    return
                 self._process_lwt(device_id, raw_payload)
                 return
 
@@ -247,7 +257,7 @@ class MQTTClient:
             if msg_type == "datos":
                 self._process_measurement(device_id, data)
             elif msg_type == "estado":
-                self._process_status(device_id, data)
+                self._process_status(device_id, data, es_retained=es_retained)
             elif msg_type == "alerta":
                 self._process_alert(device_id, data)
             else:
@@ -431,7 +441,7 @@ class MQTTClient:
         except Exception as e:
             logger.error(f"Error guardando medición: {e}", exc_info=True)
 
-    def _process_status(self, device_id: str, data: dict):
+    def _process_status(self, device_id: str, data: dict, es_retained: bool = False):
         """
         Procesa un mensaje del topic /estado (salud del nodo).
 
@@ -473,13 +483,16 @@ class MQTTClient:
                     logger.warning(f"/estado: dispositivo '{device_id}' no encontrado en BD")
                     return
 
-                # Estado de conexion: campo SenML "online" o true por defecto
+                # Estado de conexion: campo SenML "online" o true por defecto.
+                # Un /estado retained solo aporta datos de salud: su "online"
+                # y su marca de tiempo pertenecen al pasado.
                 online = data.get("online", True)
-                if not dispositivo.activo and online:
-                    dispositivo.activo = True
-                    logger.info(f"Dispositivo {device_id} reactivado: reporta /estado")
-                dispositivo.conectado = bool(online)
-                dispositivo.ultima_conexion = datetime.now(timezone.utc)
+                if not es_retained:
+                    if not dispositivo.activo and online:
+                        dispositivo.activo = True
+                        logger.info(f"Dispositivo {device_id} reactivado: reporta /estado")
+                    dispositivo.conectado = bool(online)
+                    dispositivo.ultima_conexion = datetime.now(timezone.utc)
 
                 # ── Helpers tolerantes ──────────────────────────────────────
                 def _bool_any(*keys):

@@ -16,6 +16,9 @@ const variables = [
   { key: 'potencia', label: 'Potencia', color: '#10b981', unidad: 'W' },
   { key: 'voltaje', label: 'Voltaje', color: '#f59e0b', unidad: 'V' },
   { key: 'corriente', label: 'Corriente', color: '#3b82f6', unidad: 'A' },
+  // Contador acumulado del medidor (NVS del firmware): la curva siempre
+  // crece; los escalones planos son periodos sin consumo.
+  { key: 'energia', label: 'Consumo', color: '#8b5cf6', unidad: 'kWh' },
 ];
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -57,14 +60,24 @@ const ConsumoHistoricoChart = ({
 }) => {
   const [variable, setVariable] = useState(variableInicial);
 
+  // En ventanas de más de 48h la hora sola es ambigua (se repite cada día):
+  // se antepone día/mes. El umbral se infiere del propio rango de datos.
+  const rangoMs = datos.length > 1
+    ? Math.abs(new Date(datos[0].timestamp) - new Date(datos[datos.length - 1].timestamp))
+    : 0;
+  const mostrarFecha = rangoMs > 48 * 3600 * 1000;
+
   const datosFormateados = datos
     .map((medicion) => {
       const fecha = new Date(medicion.timestamp);
+      const hora = fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+      const dia = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit' });
       return {
-        hora: fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
+        hora: mostrarFecha ? `${dia} ${hora}` : hora,
         potencia: medicion.potencia_activa,
         voltaje: medicion.voltaje_rms,
         corriente: medicion.corriente_rms,
+        energia: medicion.energia_activa,
       };
     })
     .reverse();
@@ -132,7 +145,7 @@ const ConsumoHistoricoChart = ({
             <YAxis
               tick={{ fontSize: 12 }}
               stroke="#9ca3af"
-              domain={variable === 'voltaje' ? ['auto', 'auto'] : [0, 'auto']}
+              domain={variable === 'voltaje' || variable === 'energia' ? ['auto', 'auto'] : [0, 'auto']}
               label={{
                 value: `${variableActual.label} (${variableActual.unidad})`,
                 angle: -90,

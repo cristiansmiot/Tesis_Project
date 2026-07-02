@@ -1,4 +1,4 @@
-"""MODELO: Dispositivo - Representa un medidor de energía ESP32"""
+"""Dispositivo - Representa un medidor de energía ESP32"""
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -12,6 +12,10 @@ class Dispositivo(Base):
     device_id = Column(String(50), unique=True, nullable=False, index=True)
     nombre = Column(String(100), nullable=True, default="Medidor Sin Nombre")
     ubicacion = Column(String(200), nullable=True)
+    # Etiqueta libre para agrupar medidores en consultas (ej. "sede-norte",
+    # "piloto-2026"). Editable por operador/admin; el resto de campos de
+    # identidad (device_id, firmware) los reporta el propio equipo.
+    etiqueta = Column(String(50), nullable=True, index=True)
     descripcion = Column(Text, nullable=True)
     activo = Column(Boolean, default=True)
     conectado = Column(Boolean, default=False)

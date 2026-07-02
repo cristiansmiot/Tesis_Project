@@ -113,6 +113,12 @@ export const authAPI = {
       body: JSON.stringify({ device_ids: deviceIds }),
     });
   },
+
+  eliminarUsuario: async (usuarioId) => {
+    return fetchAPI(`${API_BASE_URL}/auth/usuarios/${usuarioId}`, {
+      method: 'DELETE',
+    });
+  },
 };
 
 /**
@@ -146,6 +152,14 @@ export const dispositivosAPI = {
     return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}`, {
       method: 'PATCH',
       body: JSON.stringify(datos),
+    });
+  },
+
+  // Retiro lógico: el histórico se conserva y el medidor se reactiva solo
+  // si vuelve a publicar por MQTT.
+  eliminar: async (deviceId) => {
+    return fetchAPI(`${API_BASE_URL}/dispositivos/${deviceId}`, {
+      method: 'DELETE',
     });
   },
 };
@@ -212,6 +226,12 @@ export const eventosAPI = {
   reconocer: async (eventoId) => {
     return fetchAPI(`${API_BASE_URL}/eventos/${eventoId}/reconocer`, {
       method: 'PATCH',
+    });
+  },
+
+  eliminar: async (eventoId) => {
+    return fetchAPI(`${API_BASE_URL}/eventos/${eventoId}`, {
+      method: 'DELETE',
     });
   },
 };

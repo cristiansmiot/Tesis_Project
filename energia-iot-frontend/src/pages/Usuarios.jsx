@@ -13,7 +13,7 @@
  */
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { UserPlus, Shield, Power, HardDrive, X, Check, AlertTriangle, ShieldOff } from 'lucide-react';
+import { UserPlus, Power, HardDrive, X, Check, AlertTriangle, ShieldOff, Trash2 } from 'lucide-react';
 import StatusBadge from '../components/common/StatusBadge';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import { authAPI, dispositivosAPI } from '../services/api';
@@ -119,6 +119,24 @@ const Usuarios = () => {
         try {
           await authAPI.toggleActivo(usr.id);
           setMensaje(`Usuario ${usr.activo ? 'desactivado' : 'activado'}`);
+          await cargarDatos();
+        } catch (err) {
+          setError(err.message);
+        }
+      },
+    });
+  };
+
+  const eliminarUsuario = (usr) => {
+    setConfirmDialog({
+      open: true,
+      title: 'Eliminar usuario',
+      message: `¿Eliminar definitivamente a ${usr.nombre} ${usr.apellido} (${usr.email})? Esta acción no se puede deshacer y quedará registrada en el log de auditoría.`,
+      onConfirm: async () => {
+        setConfirmDialog({ open: false, title: '', message: '', onConfirm: null });
+        try {
+          const res = await authAPI.eliminarUsuario(usr.id);
+          setMensaje(res.mensaje);
           await cargarDatos();
         } catch (err) {
           setError(err.message);
@@ -338,15 +356,25 @@ const Usuarios = () => {
                       </td>
                       <td className="py-3 px-4">
                         {!esMiUsuario && (
-                          <button
-                            onClick={() => toggleActivo(usr)}
-                            className={`flex items-center gap-1 text-xs font-medium ${
-                              usr.activo ? 'text-red-600 hover:text-red-700' : 'text-green-600 hover:text-green-700'
-                            }`}
-                          >
-                            <Power className="w-3.5 h-3.5" />
-                            {usr.activo ? 'Desactivar' : 'Activar'}
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => toggleActivo(usr)}
+                              className={`flex items-center gap-1 text-xs font-medium ${
+                                usr.activo ? 'text-amber-600 hover:text-amber-700' : 'text-green-600 hover:text-green-700'
+                              }`}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                              {usr.activo ? 'Desactivar' : 'Activar'}
+                            </button>
+                            <button
+                              onClick={() => eliminarUsuario(usr)}
+                              title="Eliminar usuario (queda registrado en auditoría)"
+                              className="flex items-center gap-1 text-red-600 hover:text-red-700 text-xs font-medium"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Eliminar
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>

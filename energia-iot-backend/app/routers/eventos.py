@@ -1,4 +1,4 @@
-"""ROUTER: Eventos y Alarmas"""
+"""Eventos y Alarmas"""
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -9,7 +9,10 @@ from datetime import datetime
 from app.database import get_db
 from app.models.evento import Evento
 from app.models.usuario import Usuario
-from app.services.auth import get_current_user, get_optional_user, require_operador_or_admin
+from app.services.auth import (
+    get_current_user, get_optional_user,
+    require_operador_or_admin, require_super_admin,
+)
 from app.services.audit import registrar_accion
 
 router = APIRouter(prefix="/eventos", tags=["Eventos y Alarmas"])
@@ -115,3 +118,46 @@ def reconocer_evento(
     )
 
     return {"mensaje": "Evento reconocido", "evento_id": evento_id}
+
+
+@router.delete("/{evento_id}")
+def eliminar_evento(
+    evento_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(require_super_admin),
+):
+    """
+    Borra definitivamente un evento (solo super_admin). Antes de borrarlo
+    se copia su contenido completo al log de auditoría — en especial la
+    severidad — para que la eliminación de una alarma crítica deje traza
+    de qué se borró, cuándo ocurrió y quién lo hizo.
+    """
+    evento = db.query(Evento).filter(Evento.id == evento_id).first()
+    if not evento:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+
+    detalles = {
+        "device_id": evento.device_id,
+        "tipo": evento.tipo,
+        "severidad": evento.severidad,
+        "valor": evento.valor,
+        "umbral": evento.umbral,
+        "mensaje": evento.mensaje,
+        "estaba_activo": evento.activo,
+        "timestamp_evento": evento.timestamp,
+    }
+
+    db.delete(evento)
+    db.commit()
+
+    registrar_accion(
+        db,
+        accion="evento_critico_eliminado" if evento.severidad == "critical" else "evento_eliminado",
+        usuario_email=usuario.email,
+        recurso="evento", recurso_id=str(evento_id),
+        detalles=detalles,
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {"mensaje": f"Evento {evento_id} eliminado", "evento_id": evento_id}

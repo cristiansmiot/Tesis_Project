@@ -9,7 +9,7 @@ Control de acceso:
   - PATCH (actualizar): Solo super_admin y operador.
   - DELETE (eliminar): Solo super_admin.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, timedelta
@@ -19,10 +19,12 @@ from app.models.dispositivo import Dispositivo
 from app.models.nodo_salud import NodoSalud
 from app.models.usuario import Usuario
 from app.schemas.dispositivo import DispositivoCreate, DispositivoUpdate, DispositivoResponse, DispositivoEstado
+from app.services.audit import registrar_accion
 from app.services.auth import (
     get_current_user, get_optional_user, obtener_dispositivos_asignados,
     require_operador_or_admin, require_super_admin,
 )
+from app.services.conexion import refrescar_estados_conexion
 
 router = APIRouter(prefix="/dispositivos", tags=["Dispositivos"])
 
@@ -48,13 +50,18 @@ def _verificar_acceso_dispositivo(device_id: str, usuario: Optional[Usuario], db
 def listar_dispositivos(
     skip: int = 0,
     limit: int = 100,
-    activo: Optional[bool] = None,
+    activo: Optional[bool] = Query(True, description="True (default) oculta los eliminados; None los incluye"),
+    etiqueta: Optional[str] = Query(None, description="Filtrar por etiqueta de agrupación"),
     db: Session = Depends(get_db),
     usuario: Optional[Usuario] = Depends(get_optional_user),
 ):
+    refrescar_estados_conexion(db)
+
     query = db.query(Dispositivo)
     if activo is not None:
         query = query.filter(Dispositivo.activo == activo)
+    if etiqueta:
+        query = query.filter(Dispositivo.etiqueta == etiqueta)
 
     # Visualizador solo ve sus dispositivos asignados
     if usuario and usuario.es_visualizador:
@@ -73,6 +80,7 @@ def obtener_dispositivo(
 ):
     device_id = device_id.strip().upper()
     _verificar_acceso_dispositivo(device_id, usuario, db)
+    refrescar_estados_conexion(db)
     dispositivo = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
     if not dispositivo:
         raise HTTPException(status_code=404, detail=f"Dispositivo '{device_id}' no encontrado")
@@ -100,32 +108,66 @@ def crear_dispositivo(
 def actualizar_dispositivo(
     device_id: str,
     data: DispositivoUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    _usuario: Usuario = Depends(require_operador_or_admin),
+    usuario: Usuario = Depends(require_operador_or_admin),
 ):
     device_id = device_id.strip().upper()
     dispositivo = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
     if not dispositivo:
         raise HTTPException(status_code=404, detail=f"Dispositivo '{device_id}' no encontrado")
+
+    cambios = {}
     for campo, valor in data.model_dump(exclude_unset=True).items():
-        setattr(dispositivo, campo, valor)
+        anterior = getattr(dispositivo, campo)
+        if anterior != valor:
+            cambios[campo] = {"antes": anterior, "despues": valor}
+            setattr(dispositivo, campo, valor)
     db.commit()
     db.refresh(dispositivo)
+
+    if cambios:
+        registrar_accion(
+            db, accion="dispositivo_actualizado", usuario_email=usuario.email,
+            recurso="dispositivo", recurso_id=device_id, detalles=cambios,
+            ip_address=request.client.host if request.client else None,
+        )
     return dispositivo
 
 
-@router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{device_id}")
 def eliminar_dispositivo(
     device_id: str,
+    request: Request,
     db: Session = Depends(get_db),
-    _usuario: Usuario = Depends(require_super_admin),
+    usuario: Usuario = Depends(require_super_admin),
 ):
+    """
+    Retiro lógico del medidor: se desactiva pero sus mediciones, eventos y
+    salud histórica quedan en la base. Si el mismo device_id vuelve a
+    publicar por MQTT, el consumidor lo reactiva automáticamente y el
+    histórico previo sigue disponible (un borrado físico arrastraría las
+    mediciones por el cascade de la relación).
+    """
     device_id = device_id.strip().upper()
     dispositivo = db.query(Dispositivo).filter(Dispositivo.device_id == device_id).first()
     if not dispositivo:
         raise HTTPException(status_code=404, detail=f"Dispositivo '{device_id}' no encontrado")
-    db.delete(dispositivo)
+    if not dispositivo.activo:
+        raise HTTPException(status_code=400, detail=f"El dispositivo '{device_id}' ya fue eliminado")
+
+    dispositivo.activo = False
+    dispositivo.conectado = False
     db.commit()
+
+    registrar_accion(
+        db, accion="dispositivo_eliminado", usuario_email=usuario.email,
+        recurso="dispositivo", recurso_id=device_id,
+        detalles={"nombre": dispositivo.nombre, "ubicacion": dispositivo.ubicacion},
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"mensaje": f"Medidor '{device_id}' retirado. El histórico se conserva y "
+                       "se reactivará solo si el equipo vuelve a reportar."}
 
 
 @router.get("/{device_id}/estado", response_model=DispositivoEstado)

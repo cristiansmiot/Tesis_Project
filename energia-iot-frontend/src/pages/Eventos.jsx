@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Bell, CheckCircle, AlertTriangle, Filter } from 'lucide-react';
+import { Bell, CheckCircle, Trash2 } from 'lucide-react';
 import StatusBadge from '../components/common/StatusBadge';
+import ConfirmDialog from '../components/common/ConfirmDialog';
 import { eventosAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const severidadColor = {
   critical: 'red',
@@ -12,10 +14,12 @@ const severidadColor = {
 
 const Eventos = () => {
   const { refreshKey } = useOutletContext();
+  const { esSuperAdmin } = useAuth();
   const [eventos, setEventos] = useState([]);
   const [total, setTotal] = useState(0);
   const [filtroActivo, setFiltroActivo] = useState('todos');
   const [cargando, setCargando] = useState(true);
+  const [confirmBorrar, setConfirmBorrar] = useState(null); // evento a eliminar
 
   useEffect(() => {
     cargarEventos();
@@ -41,6 +45,17 @@ const Eventos = () => {
   const reconocer = async (eventoId) => {
     try {
       await eventosAPI.reconocer(eventoId);
+      cargarEventos();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  };
+
+  const eliminarEvento = async () => {
+    const ev = confirmBorrar;
+    setConfirmBorrar(null);
+    try {
+      await eventosAPI.eliminar(ev.id);
       cargarEventos();
     } catch (err) {
       alert(`Error: ${err.message}`);
@@ -121,18 +136,30 @@ const Eventos = () => {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      {e.activo && (
-                        <button
-                          onClick={() => reconocer(e.id)}
-                          className="flex items-center gap-1 text-blue-600 hover:underline text-xs font-medium"
-                        >
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          Reconocer
-                        </button>
-                      )}
-                      {!e.activo && e.reconocido_por && (
-                        <span className="text-xs text-gray-400">{e.reconocido_por}</span>
-                      )}
+                      <div className="flex items-center gap-3">
+                        {e.activo && (
+                          <button
+                            onClick={() => reconocer(e.id)}
+                            className="flex items-center gap-1 text-blue-600 hover:underline text-xs font-medium"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            Reconocer
+                          </button>
+                        )}
+                        {!e.activo && e.reconocido_por && (
+                          <span className="text-xs text-gray-400">{e.reconocido_por}</span>
+                        )}
+                        {esSuperAdmin && (
+                          <button
+                            onClick={() => setConfirmBorrar(e)}
+                            title="Eliminar evento (queda registrado en auditoría)"
+                            className="flex items-center gap-1 text-red-600 hover:text-red-700 text-xs font-medium"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Borrar
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -141,6 +168,20 @@ const Eventos = () => {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!confirmBorrar}
+        title="Eliminar evento"
+        message={`¿Eliminar el evento "${confirmBorrar?.mensaje}" de ${confirmBorrar?.device_id}?${
+          confirmBorrar?.severidad === 'critical'
+            ? ' Es una alarma CRÍTICA: el borrado quedará registrado en el log de auditoría con todo su contenido.'
+            : ' El borrado queda registrado en auditoría.'
+        }`}
+        confirmLabel="Eliminar"
+        cancelLabel="Cancelar"
+        onConfirm={eliminarEvento}
+        onCancel={() => setConfirmBorrar(null)}
+      />
     </div>
   );
 };

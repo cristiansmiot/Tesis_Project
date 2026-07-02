@@ -1,4 +1,4 @@
-"""ROUTER: Autenticación - Login, registro, perfil, gestión de usuarios"""
+"""Autenticación - Login, registro, perfil, gestión de usuarios"""
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -278,6 +278,44 @@ def toggle_activo(
     )
 
     return {"mensaje": f"Usuario {usuario.email} {'activado' if usuario.activo else 'desactivado'}"}
+
+
+@router.delete("/usuarios/{usuario_id}")
+def eliminar_usuario(
+    usuario_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_super_admin),
+):
+    """
+    Elimina definitivamente un usuario (solo super_admin). No permite
+    auto-borrado. El registro de auditoría conserva email, rol y estado
+    del usuario eliminado; las acciones históricas de auditoría no se
+    tocan porque referencian al usuario por email, no por FK.
+    """
+    usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if usuario.id == admin.id:
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta")
+
+    detalles = {"email": usuario.email, "rol": usuario.rol, "estaba_activo": usuario.activo}
+
+    # Retirar primero sus asignaciones de dispositivos (tabla puente).
+    db.query(UsuarioDispositivo).filter(
+        UsuarioDispositivo.usuario_id == usuario_id
+    ).delete()
+    db.delete(usuario)
+    db.commit()
+
+    registrar_accion(
+        db, accion="usuario_eliminado", usuario_email=admin.email,
+        recurso="usuario", recurso_id=str(usuario_id), detalles=detalles,
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {"mensaje": f"Usuario {detalles['email']} eliminado"}
 
 
 @router.put("/usuarios/{usuario_id}/dispositivos")

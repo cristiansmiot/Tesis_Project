@@ -1,4 +1,4 @@
-"""ROUTER: Dashboard - Endpoints de agregación para el resumen general"""
+"""Dashboard - Endpoints de agregación para el resumen general"""
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.config import settings
 from app.database import get_db
+from app.services.conexion import refrescar_estados_conexion
 from app.models.dispositivo import Dispositivo
 from app.models.medicion import Medicion
 from app.models.evento import Evento
@@ -50,6 +51,10 @@ def obtener_resumen(db: Session = Depends(get_db)):
     Obtener métricas consolidadas para el dashboard principal.
     Retorna conteo de dispositivos, alarmas activas y consumo total del día.
     """
+    # Antes de contar, apagar el flag de los que dejaron de publicar:
+    # el LWT del broker puede perderse si el backend estaba caído.
+    refrescar_estados_conexion(db)
+
     # Conteo de dispositivos
     total = db.query(func.count(Dispositivo.id)).filter(Dispositivo.activo == True).scalar() or 0
     online = db.query(func.count(Dispositivo.id)).filter(

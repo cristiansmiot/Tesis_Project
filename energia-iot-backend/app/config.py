@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
     
+    # Detección de desconexión: un medidor se considera offline si no ha
+    # publicado nada (datos, estado o conexión) en este tiempo. El firmware
+    # publica /datos cada 60 s, así que 5 minutos tolera varios reintentos
+    # de red antes de declarar la caída.
+    OFFLINE_UMBRAL_MIN: int = 5
+
     # Calidad de tensión (CREG 024/2015)
     # Nominal residencial monofásico acordado con el director: 110 V ±10%.
     # Configurable por entorno porque algunas zonas del país operan a 120 V.

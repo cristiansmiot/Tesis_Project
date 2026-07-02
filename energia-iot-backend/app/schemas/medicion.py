@@ -1,4 +1,4 @@
-"""SCHEMAS: Medicion - Validación de datos de mediciones de energía"""
+"""Medicion - Validación de datos de mediciones de energía"""
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
@@ -62,10 +62,35 @@ class MedicionResumen(BaseModel):
     timestamp: datetime
 
 
+class MedicionPunto(BaseModel):
+    """Punto de la serie histórica.
+
+    Puede ser una fila cruda de la BD (ventanas cortas) o el promedio de un
+    bucket de tiempo (ventanas de semanas/meses, donde devolver cada muestra
+    de 1/min sería inviable). `muestras` > 1 identifica los puntos agregados.
+    """
+    id: Optional[int] = None
+    device_id: str
+    voltaje_rms: float
+    corriente_rms: float
+    potencia_activa: float
+    potencia_reactiva: Optional[float] = 0.0
+    potencia_aparente: Optional[float] = 0.0
+    factor_potencia: Optional[float] = 1.0
+    frecuencia: Optional[float] = None
+    energia_activa: Optional[float] = 0.0
+    timestamp: datetime
+    muestras: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
 class MedicionHistorico(BaseModel):
     device_id: str
     periodo_inicio: datetime
     periodo_fin: datetime
     total_mediciones: int
+    resolucion: str = "cruda"  # cruda | hora | dia
     estadisticas: dict
-    mediciones: List[MedicionResponse]
+    mediciones: List[MedicionPunto]

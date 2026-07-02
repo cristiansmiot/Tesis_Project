@@ -58,8 +58,15 @@ const MedidorDetalle = () => {
   const [cargando, setCargando] = useState(true);
   const [comandoEnviando, setComandoEnviando] = useState(null);
   const [comandoMensaje, setComandoMensaje] = useState('');
-  // Periodo para la grafica del resumen
-  const [periodoResumen, setPeriodoResumen] = useState(24);
+  // Ventana de la serie histórica (compartida por Resumen e Histórico).
+  // Más de 48h el backend devuelve promedios por hora/día (resolución adaptativa).
+  const [periodoHoras, setPeriodoHoras] = useState(24);
+
+  // Edición de datos administrativos (nombre, ubicación, etiqueta)
+  const [editando, setEditando] = useState(false);
+  const [formEdicion, setFormEdicion] = useState({ nombre: '', ubicacion: '', etiqueta: '', descripcion: '' });
+  const [guardando, setGuardando] = useState(false);
+  const [edicionMensaje, setEdicionMensaje] = useState('');
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState({ open: false, comando: '', label: '' });
@@ -68,13 +75,16 @@ const MedidorDetalle = () => {
     cargarDatos();
   }, [deviceId, refreshKey]);
 
+  useEffect(() => {
+    cargarHistorial();
+  }, [deviceId, refreshKey, periodoHoras]);
+
   const cargarDatos = async () => {
     setCargando(true);
     try {
       const resultados = await Promise.allSettled([
         dispositivosAPI.obtener(deviceId),
         medicionesAPI.ultima(deviceId),
-        medicionesAPI.historico(deviceId, 48),
         dispositivosAPI.salud(deviceId),
         saludAPI.metricas(deviceId, 24),
         eventosAPI.listar({ device_id: deviceId, limit: 20 }),
@@ -83,22 +93,59 @@ const MedidorDetalle = () => {
 
       if (resultados[0].status === 'fulfilled') setDispositivo(resultados[0].value);
       if (resultados[1].status === 'fulfilled') setMedicion(resultados[1].value);
-      if (resultados[2].status === 'fulfilled') {
-        setHistorial(resultados[2].value.mediciones || []);
-        setEstadisticas(resultados[2].value.estadisticas);
-      }
-      if (resultados[3].status === 'fulfilled') setSaludData(resultados[3].value);
-      if (resultados[4].status === 'fulfilled') setMetricasTransmision(resultados[4].value);
-      if (resultados[5].status === 'fulfilled') {
-        const evts = resultados[5].value.eventos || [];
+      if (resultados[2].status === 'fulfilled') setSaludData(resultados[2].value);
+      if (resultados[3].status === 'fulfilled') setMetricasTransmision(resultados[3].value);
+      if (resultados[4].status === 'fulfilled') {
+        const evts = resultados[4].value.eventos || [];
         setEventosDevice(evts);
         setEventosActivos(evts.filter((e) => e.activo).length);
       }
-      if (resultados[6].status === 'fulfilled') setReconciliacion(resultados[6].value);
+      if (resultados[5].status === 'fulfilled') setReconciliacion(resultados[5].value);
     } catch (err) {
       console.error('Error cargando detalle:', err);
     } finally {
       setCargando(false);
+    }
+  };
+
+  const cargarHistorial = async () => {
+    try {
+      const res = await medicionesAPI.historico(deviceId, periodoHoras);
+      setHistorial(res.mediciones || []);
+      setEstadisticas(res.estadisticas);
+    } catch {
+      setHistorial([]);
+      setEstadisticas(null);
+    }
+  };
+
+  const abrirEdicion = () => {
+    setFormEdicion({
+      nombre: dispositivo?.nombre || '',
+      ubicacion: dispositivo?.ubicacion || '',
+      etiqueta: dispositivo?.etiqueta || '',
+      descripcion: dispositivo?.descripcion || '',
+    });
+    setEdicionMensaje('');
+    setEditando(true);
+  };
+
+  const guardarEdicion = async (e) => {
+    e.preventDefault();
+    setGuardando(true);
+    try {
+      const actualizado = await dispositivosAPI.actualizar(deviceId, {
+        nombre: formEdicion.nombre || null,
+        ubicacion: formEdicion.ubicacion || null,
+        etiqueta: formEdicion.etiqueta || null,
+        descripcion: formEdicion.descripcion || null,
+      });
+      setDispositivo(actualizado);
+      setEditando(false);
+    } catch (err) {
+      setEdicionMensaje(`Error: ${err.message}`);
+    } finally {
+      setGuardando(false);
     }
   };
 
@@ -125,12 +172,16 @@ const MedidorDetalle = () => {
     ? new Date(dispositivo.ultima_conexion).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
     : 'N/A';
 
-  // Filtrar historial segun periodo seleccionado en Resumen
-  const ahora = Date.now();
-  const historialResumen = historial.filter((m) => {
-    const ts = new Date(m.timestamp).getTime();
-    return ahora - ts <= periodoResumen * 3600 * 1000;
-  });
+  // Ventanas disponibles para la serie histórica. El backend agrega por
+  // hora (>48h) o por día (>31d) para que un año no sean 500k puntos.
+  const periodosDisponibles = [
+    { h: 24, label: '24h' },
+    { h: 48, label: '48h' },
+    { h: 168, label: '7d' },
+    { h: 720, label: '30d' },
+    { h: 4380, label: '6m' },
+    { h: 8760, label: '1a' },
+  ];
 
   return (
     <div>
@@ -165,10 +216,15 @@ const MedidorDetalle = () => {
               label={dispositivo?.conectado ? 'Online' : 'Offline'}
               color={dispositivo?.conectado ? 'green' : 'red'}
             />
-            <button className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-              <Edit className="w-4 h-4" />
-              Editar
-            </button>
+            {puedeEnviarComandos && (
+              <button
+                onClick={abrirEdicion}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Edit className="w-4 h-4" />
+                Editar
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -189,17 +245,14 @@ const MedidorDetalle = () => {
           {/* Fila superior: Grafica de tendencia + Estado/Salud */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
-              {/* Grafica de consumo con selector de periodo */}
+              {/* Grafica de tendencia con selector de periodo */}
               <ConsumoHistoricoChart
-                datos={historialResumen}
+                datos={historial}
                 variableInicial="potencia"
-                titulo="Tendencia rapida"
-                periodos={[
-                  { h: 24, label: '24h' },
-                  { h: 48, label: '48h' },
-                ]}
-                periodoActual={periodoResumen}
-                onCambioPeriodo={setPeriodoResumen}
+                titulo="Tendencia"
+                periodos={periodosDisponibles}
+                periodoActual={periodoHoras}
+                onCambioPeriodo={setPeriodoHoras}
               />
             </div>
             <div className="space-y-6">
@@ -220,7 +273,7 @@ const MedidorDetalle = () => {
               <DeviceIndicators medicion={medicion} />
             </div>
             <div>
-              <DeviceInfoSidebar dispositivo={dispositivo} medicion={medicion} />
+              <DeviceInfoSidebar dispositivo={dispositivo} salud={saludData} />
             </div>
           </div>
         </div>
@@ -241,7 +294,12 @@ const MedidorDetalle = () => {
       {/* Tab: Historico */}
       {activeTab === 'historico' && (
         <div className="space-y-6">
-          <ConsumoHistoricoChart datos={historial} />
+          <ConsumoHistoricoChart
+            datos={historial}
+            periodos={periodosDisponibles}
+            periodoActual={periodoHoras}
+            onCambioPeriodo={setPeriodoHoras}
+          />
           <TablaHistorial mediciones={historial} limite={20} />
         </div>
       )}
@@ -341,6 +399,85 @@ const MedidorDetalle = () => {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal de edición: solo campos administrativos. La identidad
+          técnica (ID/serial, firmware, tipo de conexión) la reporta el
+          propio equipo por MQTT y no se puede editar aquí. */}
+      {editando && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="font-semibold text-gray-800">Editar medidor {deviceId}</h3>
+              <button onClick={() => setEditando(false)} className="text-gray-400 hover:text-gray-600"></button>
+            </div>
+            <form onSubmit={guardarEdicion} className="p-6 space-y-4">
+              {edicionMensaje && (
+                <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm">{edicionMensaje}</div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                <input
+                  type="text"
+                  maxLength={100}
+                  value={formEdicion.nombre}
+                  onChange={(e) => setFormEdicion({ ...formEdicion, nombre: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ubicación</label>
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={formEdicion.ubicacion}
+                  onChange={(e) => setFormEdicion({ ...formEdicion, ubicacion: e.target.value })}
+                  placeholder="Ej: Laboratorio IoT - Edificio 67, Bogotá"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Etiqueta</label>
+                <input
+                  type="text"
+                  maxLength={50}
+                  value={formEdicion.etiqueta}
+                  onChange={(e) => setFormEdicion({ ...formEdicion, etiqueta: e.target.value })}
+                  placeholder="Ej: sede-norte, piloto-2026"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Agrupa medidores para filtrarlos en la lista y en consultas.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                <textarea
+                  rows={2}
+                  value={formEdicion.descripcion}
+                  onChange={(e) => setFormEdicion({ ...formEdicion, descripcion: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditando(false)}
+                  className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardando}
+                  className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 font-medium"
+                >
+                  {guardando ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

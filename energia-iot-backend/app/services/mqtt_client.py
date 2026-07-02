@@ -93,7 +93,7 @@ class MQTTClient:
                 tls_version=ssl.PROTOCOL_TLS_CLIENT,
             )
             logger.info(
-                "🔒 TLS habilitado para conexión MQTT (CA %s)",
+                "TLS habilitado para conexión MQTT (CA %s)",
                 "propia anclada" if tls_ca_file else "del sistema",
             )
 
@@ -127,7 +127,7 @@ class MQTTClient:
         Se llama desde main.py al iniciar la aplicación.
         """
         self._db_session_factory = session_factory
-        logger.info("✅ Fábrica de sesiones de BD configurada")
+        logger.info("Fábrica de sesiones de BD configurada")
 
     # ==========================================================================
     # CALLBACKS MQTT
@@ -139,17 +139,17 @@ class MQTTClient:
         if not reason_code.is_failure:
             self.is_connected = True
             logger.info(
-                f"✅ Conectado al broker MQTT: {self.broker_host}:{self.broker_port} "
+                f"Conectado al broker MQTT: {self.broker_host}:{self.broker_port} "
                 f"(client_id={self.client_id})"
             )
 
             # Suscribirse a todos los topics del medidor
             self.client.subscribe(self.topic_base, qos=0)
-            logger.info(f"📡 Suscrito a: {self.topic_base}")
+            logger.info(f"Suscrito a: {self.topic_base}")
         else:
             self.is_connected = False
             logger.error(
-                f"❌ Error de conexión MQTT: {reason_code} "
+                f"Error de conexión MQTT: {reason_code} "
                 f"(client_id={self.client_id})"
             )
 
@@ -159,11 +159,11 @@ class MQTTClient:
         # paho-mqtt v2: reason_code es un objeto ReasonCode, NO usar int()
         if reason_code.is_failure:
             logger.warning(
-                f"⚠️ Desconexión inesperada del broker MQTT "
+                f"Desconexión inesperada del broker MQTT "
                 f"(rc={reason_code}, client_id={self.client_id})"
             )
         else:
-            logger.info("🔌 Desconectado del broker MQTT")
+            logger.info("Desconectado del broker MQTT")
 
     @staticmethod
     def _parse_senml(records: list) -> dict:
@@ -214,12 +214,12 @@ class MQTTClient:
             self.messages_received += 1
             self.last_message_at = datetime.now(timezone.utc)
 
-            logger.info(f"📩 [{topic}]: {raw_payload[:120]}...")
+            logger.info(f"[{topic}]: {raw_payload[:120]}...")
 
             # Parsear el topic: medidor/{device_id}/{tipo}
             parts = topic.split("/")
             if len(parts) < 3:
-                logger.warning(f"⚠️ Topic con formato inválido: {topic}")
+                logger.warning(f"Topic con formato inválido: {topic}")
                 return
 
             device_id = parts[1]  # ej: "ESP32-001"
@@ -236,11 +236,11 @@ class MQTTClient:
                 parsed = json.loads(raw_payload)
                 if isinstance(parsed, list):
                     data = self._parse_senml(parsed)
-                    logger.debug(f"📐 SenML: {len(parsed)} registros → {len(data)} campos")
+                    logger.debug(f"SenML: {len(parsed)} registros → {len(data)} campos")
                 else:
                     data = parsed  # JSON plano (retrocompatibilidad)
             except json.JSONDecodeError:
-                logger.error(f"❌ Payload inválido en topic {topic}: {raw_payload[:80]}")
+                logger.error(f"Payload inválido en topic {topic}: {raw_payload[:80]}")
                 return
 
             # Procesar según tipo de mensaje
@@ -251,10 +251,10 @@ class MQTTClient:
             elif msg_type == "alerta":
                 self._process_alert(device_id, data)
             else:
-                logger.info(f"ℹ️ Tipo de mensaje no procesado: {msg_type}")
+                logger.info(f"Tipo de mensaje no procesado: {msg_type}")
 
         except Exception as e:
-            logger.error(f"❌ Error procesando mensaje: {e}", exc_info=True)
+            logger.error(f"Error procesando mensaje: {e}", exc_info=True)
 
     # ==========================================================================
     # PROCESAMIENTO DE MENSAJES
@@ -290,7 +290,7 @@ class MQTTClient:
         }
         """
         if not self._db_session_factory:
-            logger.warning("⚠️ No hay sesión de BD configurada, descartando medición")
+            logger.warning("No hay sesión de BD configurada, descartando medición")
             return
 
         try:
@@ -341,6 +341,13 @@ class MQTTClient:
                     db.refresh(dispositivo)
                     logger.info(f"🆕 Dispositivo auto-registrado: {device_id}")
 
+                # Un medidor retirado desde la plataforma (activo=False) que
+                # vuelve a reportar se reactiva solo: su histórico nunca se
+                # borró, así que la serie continúa donde quedó.
+                if not dispositivo.activo:
+                    dispositivo.activo = True
+                    logger.info(f"Dispositivo {device_id} reactivado: volvió a publicar mediciones")
+
                 # Actualizar estado de conexión del dispositivo
                 dispositivo.conectado = True
                 dispositivo.ultima_conexion = datetime.now(timezone.utc)
@@ -380,7 +387,7 @@ class MQTTClient:
 
                 self.messages_saved += 1
                 logger.info(
-                    f"💾 Medición guardada: {device_id} | "
+                    f"Medición guardada: {device_id} | "
                     f"V={voltage:.1f}V | "
                     f"I={current:.2f}A | "
                     f"P={active_power:.1f}W | "
@@ -416,13 +423,13 @@ class MQTTClient:
                     )
                     db.add(evento)
                     db.commit()
-                    logger.warning(f"🚨 Alerta CREG auto-generada: {device_id} | {mensaje}")
+                    logger.warning(f"Alerta CREG auto-generada: {device_id} | {mensaje}")
 
             finally:
                 db.close()
 
         except Exception as e:
-            logger.error(f"❌ Error guardando medición: {e}", exc_info=True)
+            logger.error(f"Error guardando medición: {e}", exc_info=True)
 
     def _process_status(self, device_id: str, data: dict):
         """
@@ -463,11 +470,14 @@ class MQTTClient:
                 ).first()
 
                 if not dispositivo:
-                    logger.warning(f"⚠️ /estado: dispositivo '{device_id}' no encontrado en BD")
+                    logger.warning(f"/estado: dispositivo '{device_id}' no encontrado en BD")
                     return
 
                 # Estado de conexion: campo SenML "online" o true por defecto
                 online = data.get("online", True)
+                if not dispositivo.activo and online:
+                    dispositivo.activo = True
+                    logger.info(f"Dispositivo {device_id} reactivado: reporta /estado")
                 dispositivo.conectado = bool(online)
                 dispositivo.ultima_conexion = datetime.now(timezone.utc)
 
@@ -556,7 +566,7 @@ class MQTTClient:
                 db.commit()
 
                 logger.info(
-                    f"📊 /estado {device_id} | "
+                    f"/estado {device_id} | "
                     f"ac={ac_ok} carga={carga} ade={ade_ok_val} "
                     f"modem={modem_ok} mqtt={mqtt_ok_val} cal={cal_ok} "
                     f"rssi={rssi_dbm} pkt_ok={mqtt_exitos} recon={red_exitos}"
@@ -566,7 +576,7 @@ class MQTTClient:
                 db.close()
 
         except Exception as e:
-            logger.error(f"❌ Error procesando /estado: {e}", exc_info=True)
+            logger.error(f"Error procesando /estado: {e}", exc_info=True)
 
     def _process_lwt(self, device_id: str, raw: str):
         """
@@ -597,18 +607,18 @@ class MQTTClient:
                     if online:
                         dispositivo.ultima_conexion = datetime.now(timezone.utc)
                     db.commit()
-                    estado_str = "🟢 ONLINE" if online else "🔴 OFFLINE"
-                    logger.info(f"📡 /conexion {device_id}: {estado_str}")
+                    estado_str = "ONLINE" if online else "OFFLINE"
+                    logger.info(f"/conexion {device_id}: {estado_str}")
                 else:
                     logger.warning(
-                        f"⚠️ /conexion: dispositivo '{device_id}' no encontrado en BD"
+                        f"/conexion: dispositivo '{device_id}' no encontrado en BD"
                     )
 
             finally:
                 db.close()
 
         except Exception as e:
-            logger.error(f"❌ Error procesando /conexion: {e}", exc_info=True)
+            logger.error(f"Error procesando /conexion: {e}", exc_info=True)
 
     def _process_alert(self, device_id: str, data: dict):
         """
@@ -630,7 +640,7 @@ class MQTTClient:
         mensaje_in = data.get("message")
 
         logger.warning(
-            f"🚨 ALERTA de {device_id}: "
+            f"ALERTA de {device_id}: "
             f"tipo={tipo_raw or 'unknown'} | "
             f"valor={valor if valor is not None else 'N/A'} | "
             f"pq={pq_flags if pq_flags is not None else 'N/A'}"
@@ -684,14 +694,14 @@ class MQTTClient:
                 db.add(evento)
                 db.commit()
                 logger.info(
-                    f"💾 Alerta guardada en BD: {device_id} | {tipo} | "
+                    f"Alerta guardada en BD: {device_id} | {tipo} | "
                     f"valor={valor} pq={pq_flags}"
                 )
             finally:
                 db.close()
 
         except Exception as e:
-            logger.error(f"❌ Error guardando alerta: {e}", exc_info=True)
+            logger.error(f"Error guardando alerta: {e}", exc_info=True)
 
     # ==========================================================================
     # CONTROL DEL CLIENTE
@@ -705,20 +715,20 @@ class MQTTClient:
             while not self._should_stop:
                 try:
                     logger.info(
-                        f"🔄 Conectando a MQTT: {self.broker_host}:{self.broker_port} "
+                        f"Conectando a MQTT: {self.broker_host}:{self.broker_port} "
                         f"(client_id={self.client_id})"
                     )
                     self.client.connect(self.broker_host, self.broker_port, keepalive=60)
                     self.client.loop_forever()
                 except Exception as e:
-                    logger.error(f"❌ Error en conexión MQTT: {e}")
+                    logger.error(f"Error en conexión MQTT: {e}")
                     if not self._should_stop:
                         logger.info("⏳ Reintentando en 10 segundos...")
                         time.sleep(10)
 
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
-        logger.info("🚀 Cliente MQTT iniciado en hilo secundario")
+        logger.info("Cliente MQTT iniciado en hilo secundario")
 
     def stop(self):
         """Detiene la conexión MQTT."""
@@ -726,7 +736,7 @@ class MQTTClient:
         self.client.disconnect()
         if self._thread:
             self._thread.join(timeout=5)
-        logger.info("🛑 Cliente MQTT detenido")
+        logger.info("Cliente MQTT detenido")
 
     def get_status(self) -> dict:
         """Retorna el estado actual del cliente MQTT."""

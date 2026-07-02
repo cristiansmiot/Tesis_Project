@@ -1,14 +1,18 @@
 /**
  * Panel lateral con información del dispositivo.
- * Props: dispositivo, medicion
+ * Nombre/ubicación/etiqueta son administrativos (editables); serial,
+ * firmware y tipo de conexión los reporta el propio equipo por MQTT.
+ * Props: dispositivo, salud (registro /estado más reciente)
  */
-const DeviceInfoSidebar = ({ dispositivo, medicion }) => {
+const DeviceInfoSidebar = ({ dispositivo, salud }) => {
   const campos = [
     { label: 'Nombre', valor: dispositivo?.nombre || 'Sin nombre' },
     { label: 'ID', valor: dispositivo?.device_id || 'N/A' },
+    { label: 'Serial (IMEI)', valor: salud?.imei || 'Sin reportar' },
     { label: 'Ubicación', valor: dispositivo?.ubicacion || 'Sin ubicación' },
-    { label: 'Firmware', valor: dispositivo?.firmware_version || 'N/A' },
-    { label: 'Tipo de conexión', valor: 'WiFi' },
+    { label: 'Etiqueta', valor: dispositivo?.etiqueta || '—' },
+    { label: 'Firmware', valor: salud?.fw_version || dispositivo?.firmware_version || 'Sin reportar' },
+    { label: 'Tipo de conexión', valor: 'Celular LTE-M/NB-IoT (SIM7080G)' },
     {
       label: 'Última conexión',
       valor: dispositivo?.ultima_conexion

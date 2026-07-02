@@ -50,13 +50,13 @@ def get_database_url() -> str:
     is_postgres = "postgresql" in url or "postgres" in url
 
     if is_postgres:
-        logger.info("✅ Conectando a PostgreSQL (auto-detectado desde DATABASE_URL)")
+        logger.info("Conectando a PostgreSQL (auto-detectado desde DATABASE_URL)")
         return url
 
     if not settings.USE_SQLITE:
-        logger.warning("⚠️ USE_SQLITE=False pero DATABASE_URL no contiene 'postgres'. Usando SQLite como fallback.")
+        logger.warning("USE_SQLITE=False pero DATABASE_URL no contiene 'postgres'. Usando SQLite como fallback.")
 
-    logger.info("📁 Usando SQLite para desarrollo local")
+    logger.info("Usando SQLite para desarrollo local")
     return "sqlite:///./energia_iot.db"
 
 
@@ -131,7 +131,31 @@ def init_db() -> None:
     """Inicializa la base de datos creando todas las tablas."""
     from app.models import dispositivo, medicion, nodo_salud, usuario, evento, audit_log  # noqa: F401
     Base.metadata.create_all(bind=get_engine())
+    _aplicar_migraciones_incrementales()
     logger.info("Base de datos inicializada correctamente")
+
+
+def _aplicar_migraciones_incrementales() -> None:
+    """Columnas agregadas después del despliegue inicial.
+
+    create_all solo crea tablas nuevas, no altera las existentes, así que
+    la BD de producción necesita estos ALTER. Son idempotentes
+    (IF NOT EXISTS) y correr en cada arranque no tiene efecto si ya
+    aplicaron. SQLite local se recrea completo con create_all.
+    """
+    from app.config import settings
+    if settings.USE_SQLITE:
+        return
+    sentencias = [
+        "ALTER TABLE dispositivos ADD COLUMN IF NOT EXISTS etiqueta VARCHAR(50)",
+        "CREATE INDEX IF NOT EXISTS ix_dispositivos_etiqueta ON dispositivos (etiqueta)",
+    ]
+    try:
+        with get_engine().begin() as conn:
+            for sql in sentencias:
+                conn.execute(text(sql))
+    except Exception as e:  # el arranque no debe caerse por una migración
+        logger.warning(f"Migración incremental no aplicada: {e}")
 
 
 def test_connection() -> bool:

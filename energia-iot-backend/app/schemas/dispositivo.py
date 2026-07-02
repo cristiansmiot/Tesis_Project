@@ -1,4 +1,4 @@
-"""SCHEMAS: Dispositivo - Validación de datos con Pydantic"""
+"""Dispositivo - Validación de datos con Pydantic"""
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
@@ -21,8 +21,11 @@ class DispositivoCreate(DispositivoBase):
 
 
 class DispositivoUpdate(BaseModel):
+    # Solo campos administrativos. Identidad y estado técnico (device_id,
+    # firmware_version, conectado) los reporta el propio dispositivo por MQTT.
     nombre: Optional[str] = Field(default=None, max_length=100)
     ubicacion: Optional[str] = Field(default=None, max_length=200)
+    etiqueta: Optional[str] = Field(default=None, max_length=50)
     descripcion: Optional[str] = Field(default=None)
     activo: Optional[bool] = Field(default=None)
     intervalo_medicion: Optional[int] = Field(default=None, ge=10, le=3600)
@@ -30,6 +33,7 @@ class DispositivoUpdate(BaseModel):
 
 class DispositivoResponse(DispositivoBase):
     id: int
+    etiqueta: Optional[str] = None
     activo: bool
     conectado: bool
     ultima_conexion: Optional[datetime] = None

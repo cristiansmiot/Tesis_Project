@@ -1,4 +1,4 @@
-"""ROUTER: Mediciones - CRUD de mediciones de energía"""
+"""Mediciones - CRUD de mediciones de energía"""
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, asc
@@ -8,7 +8,10 @@ from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.models.dispositivo import Dispositivo
 from app.models.medicion import Medicion
-from app.schemas.medicion import MedicionCreate, MedicionResponse, MedicionResumen, MedicionHistorico
+from app.schemas.medicion import (
+    MedicionCreate, MedicionResponse, MedicionResumen,
+    MedicionHistorico, MedicionPunto,
+)
 
 router = APIRouter(prefix="/mediciones", tags=["Mediciones"])
 
@@ -37,6 +40,8 @@ def crear_medicion(data: MedicionCreate, db: Session = Depends(get_db)):
         db.add(dispositivo)
         db.commit()
         db.refresh(dispositivo)
+    if not dispositivo.activo:
+        dispositivo.activo = True  # retiro lógico revertido: el equipo volvió a reportar
     dispositivo.conectado = True
     dispositivo.ultima_conexion = datetime.utcnow()
     nueva = Medicion(
@@ -78,24 +83,94 @@ def obtener_resumen(device_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{device_id}/historico", response_model=MedicionHistorico)
-def obtener_historico(device_id: str, horas: int = 24, limite: int = 500, db: Session = Depends(get_db)):
+def obtener_historico(
+    device_id: str,
+    horas: int = Query(24, ge=1, le=8760, description="Ventana hacia atrás (hasta 1 año)"),
+    limite: int = Query(500, ge=10, le=2000),
+    db: Session = Depends(get_db),
+):
+    """
+    Serie histórica de un medidor con resolución adaptativa:
+
+    - hasta 48 h: filas crudas (una por publicación del nodo).
+    - hasta ~31 días: promedio por hora.
+    - más allá: promedio por día.
+
+    Sin la agregación, una semana a 1 muestra/min serían ~10.000 puntos por
+    variable: inmanejable para la gráfica y para el ancho de banda.
+    """
     device_id = device_id.strip().upper()
     ahora = datetime.utcnow()
     desde = ahora - timedelta(hours=horas)
-    mediciones = db.query(Medicion).filter(Medicion.device_id == device_id, Medicion.timestamp >= desde).order_by(desc(Medicion.timestamp)).limit(limite).all()
-    if not mediciones:
-        raise HTTPException(status_code=404, detail=f"No hay mediciones para '{device_id}'")
+
+    filtro = (Medicion.device_id == device_id, Medicion.timestamp >= desde)
+
     stats = db.query(
         func.avg(Medicion.voltaje_rms).label('v_avg'), func.min(Medicion.voltaje_rms).label('v_min'),
         func.max(Medicion.voltaje_rms).label('v_max'), func.avg(Medicion.potencia_activa).label('p_avg'),
         func.max(Medicion.potencia_activa).label('p_max')
-    ).filter(Medicion.device_id == device_id, Medicion.timestamp >= desde).first()
+    ).filter(*filtro).first()
+
+    if horas <= 48:
+        resolucion = "cruda"
+        crudas = (
+            db.query(Medicion).filter(*filtro)
+            .order_by(desc(Medicion.timestamp)).limit(limite).all()
+        )
+        if not crudas:
+            raise HTTPException(status_code=404, detail=f"No hay mediciones para '{device_id}'")
+        puntos = [MedicionPunto.model_validate(m) for m in crudas]
+    else:
+        resolucion = "hora" if horas <= 744 else "dia"
+        bucket_s = 3600 if resolucion == "hora" else 86400
+        filas = (
+            db.query(
+                Medicion.timestamp, Medicion.voltaje_rms, Medicion.corriente_rms,
+                Medicion.potencia_activa, Medicion.factor_potencia, Medicion.energia_activa,
+            )
+            .filter(*filtro)
+            .order_by(asc(Medicion.timestamp))
+            .all()
+        )
+        if not filas:
+            raise HTTPException(status_code=404, detail=f"No hay mediciones para '{device_id}'")
+
+        # Agrupación en memoria: a escala de prototipo (pocos nodos, 1/min)
+        # la ventana anual son cientos de miles de tuplas como máximo, y
+        # evita SQL específico por dialecto (date_trunc no existe en SQLite).
+        buckets: dict = {}
+        for ts, v, i, p, fp, e in filas:
+            clave = int(ts.timestamp()) // bucket_s
+            b = buckets.setdefault(clave, {"n": 0, "v": 0.0, "i": 0.0, "p": 0.0, "fp": 0.0, "e": None})
+            b["n"] += 1
+            b["v"] += v or 0.0
+            b["i"] += i or 0.0
+            b["p"] += p or 0.0
+            b["fp"] += fp or 0.0
+            b["e"] = e if e is not None else b["e"]  # contador acumulado: vale el último
+
+        puntos = []
+        for clave in sorted(buckets.keys(), reverse=True):
+            b = buckets[clave]
+            n = b["n"]
+            puntos.append(MedicionPunto(
+                device_id=device_id,
+                timestamp=datetime.fromtimestamp(clave * bucket_s, tz=timezone.utc),
+                voltaje_rms=round(b["v"] / n, 2),
+                corriente_rms=round(b["i"] / n, 4),
+                potencia_activa=round(b["p"] / n, 2),
+                factor_potencia=round(b["fp"] / n, 3),
+                energia_activa=b["e"],
+                muestras=n,
+            ))
+
     return MedicionHistorico(
-        device_id=device_id, periodo_inicio=desde, periodo_fin=ahora, total_mediciones=len(mediciones),
+        device_id=device_id, periodo_inicio=desde, periodo_fin=ahora,
+        total_mediciones=len(puntos), resolucion=resolucion,
         estadisticas={"voltaje_promedio": round(stats.v_avg or 0, 2), "voltaje_minimo": round(stats.v_min or 0, 2),
                       "voltaje_maximo": round(stats.v_max or 0, 2), "potencia_promedio": round(stats.p_avg or 0, 2),
                       "potencia_maxima": round(stats.p_max or 0, 2)},
-        mediciones=mediciones
+        mediciones=puntos
     )
 
 

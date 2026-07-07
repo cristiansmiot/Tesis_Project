@@ -52,15 +52,22 @@ Lo que ya funciona hoy:
 
 Lo que falta para que conectar el medidor N+1 sea solo "flashear y encender":
 
-1. **Topics derivados del IMEI en el firmware** — **HECHO (2026-07-02)**.
-   `modules/communication/mqtt_topics.c` construye en runtime
-   `medidor/<IMEI>/{datos,estado,alerta,conexion,cmd}` y usa el IMEI como
-   CLIENTID (flag `METER_MQTT_ID_FROM_IMEI`, fallback `ESP32-001` si el
-   IMEI no se pudo leer). Un único binario sirve para toda la flota.
-   **Efecto al flashear**: el nodo actual pasará a reportar con su IMEI
-   (860016040126034) y el backend lo auto-registrará como dispositivo
-   nuevo; el histórico de ESP32-001 queda intacto bajo el id viejo (se
-   puede renombrar el nuevo desde Editar).
+1. **Identidad en runtime en el firmware** — **HECHO (2026-07-02)**.
+   `modules/communication/mqtt_topics.c` construye en runtime los topics
+   `medidor/<id>/{datos,estado,alerta,conexion,cmd}` y el CLIENTID. El id
+   es `SM-<MAC eFuse del ESP32-S3>` (p. ej. `SM-A1B2C3D4E5F6`): la MAC
+   viene grabada de fábrica en el MCU, así que **sobrevive cambios de SIM
+   y de módem** (el IMEI, primera opción evaluada, pertenece al SIM7080G
+   y cambiaría en una reparación del módulo celular). El IMEI sigue
+   viajando como metadato en `/estado` para trazabilidad. Un único
+   binario sirve para toda la flota.
+   **Efecto al flashear**: el nodo actual pasará a reportar con su id
+   `SM-...` y el backend lo auto-registrará como dispositivo nuevo; el
+   histórico de ESP32-001 queda intacto bajo el id viejo (renombrar el
+   nuevo desde Editar).
+   Nota para el esquema de credenciales por dispositivo: el username del
+   broker pasa a ser este mismo id (`pattern readwrite medidor/%u/#`
+   sigue aplicando igual).
 2. **Credencial MQTT por dispositivo**: username = IMEI, clave única
    grabada en NVS durante el aprovisionamiento (no en el código). El ACL ya
    quedó preparado con la regla `pattern readwrite medidor/%u/#`

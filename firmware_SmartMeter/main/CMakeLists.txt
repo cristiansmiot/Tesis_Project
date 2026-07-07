@@ -37,7 +37,6 @@ set(SRCS
     "../tasks/task_ui.c"
     "../tasks/task_power_mgmt.c"
     "../data/meter_data.c"
-    "../data/data_buffer.c"
     "../utils/logger.c"
     "../utils/math_utils.c"
     "../utils/nvm.c"

@@ -2,14 +2,14 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "esp_mac.h"
 #include "logger.h"
 #include "meter_config.h"
-#include "sim7080g_init.h"
 
 static const char *TAG = "mqtt_topics";
 
-// 15 dígitos de IMEI + margen para el fallback configurado. Los buffers
-// de topic cubren el peor caso: "medidor/" + id + "/conexion" + NUL.
+// "SM-" + 12 hex de la MAC + NUL, con margen para el fallback configurado.
+// Los buffers de topic cubren el peor caso: "medidor/" + id + "/conexion".
 static char s_device_id[32];
 static char s_topic_datos[64];
 static char s_topic_estado[64];
@@ -17,7 +17,6 @@ static char s_topic_alerta[64];
 static char s_topic_conexion[64];
 static char s_topic_cmd[64];
 static bool s_inicializado;
-static bool s_id_es_imei;
 
 static void mqtt_topics_build(const char *device_id)
 {
@@ -31,40 +30,34 @@ static void mqtt_topics_build(const char *device_id)
 
 esp_err_t mqtt_topics_init(void)
 {
-    // Con la identidad ya fijada desde el IMEI no se recalcula: el broker
-    // retiene /estado y /conexion por topic, y cambiar de id a mitad de
-    // sesion dejaria mensajes huerfanos bajo el id anterior.
-    if (s_inicializado && s_id_es_imei) {
+    if (s_inicializado) {
         return ESP_OK;
     }
 
-#if (METER_MQTT_ID_FROM_IMEI != 0)
-    const char *imei = sim7080g_get_imei();
-    if ((imei != NULL) && (imei[0] != '\0')) {
-        mqtt_topics_build(imei);
-        s_id_es_imei = true;
-        s_inicializado = true;
-        LOG_INFO(TAG, "identidad MQTT desde IMEI: %s", s_device_id);
-        return ESP_OK;
-    }
-#endif
-
-    if (!s_inicializado) {
+    uint8_t mac[6] = {0};
+    const esp_err_t err = esp_efuse_mac_get_default(mac);
+    if (err == ESP_OK) {
+        char id[24];
+        (void)snprintf(id, sizeof(id), "%s-%02X%02X%02X%02X%02X%02X",
+                       METER_MQTT_ID_PREFIX,
+                       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        mqtt_topics_build(id);
+        LOG_INFO(TAG, "identidad del nodo: %s (MAC eFuse)", s_device_id);
+    } else {
+        // Practicamente imposible (la MAC eFuse viene de fabrica), pero un
+        // nodo sin identidad valida es peor que uno con id generico.
         mqtt_topics_build(METER_MQTT_DEVICE_ID_FALLBACK);
-        s_inicializado = true;
-        LOG_WARN(TAG, "IMEI no disponible - usando id de respaldo: %s", s_device_id);
+        LOG_ERROR(TAG, "MAC eFuse ilegible (%s) - id de respaldo: %s",
+                  esp_err_to_name(err), s_device_id);
     }
+
+    s_inicializado = true;
     return ESP_OK;
 }
 
-bool mqtt_topics_id_es_imei(void)
-{
-    return s_id_es_imei;
-}
-
-// Los getters se auto-inicializan con el fallback para que un uso temprano
-// (p.ej. UI pintando el id antes de que el modem registre) nunca devuelva
-// una cadena vacia.
+// Los getters se auto-inicializan para que ningun consumidor temprano
+// (UI pintando el id en el splash, LWT del perfil MQTT) reciba una
+// cadena vacia por orden de arranque.
 #define MQTT_TOPICS_GETTER(nombre, buffer)      \
     const char *nombre(void)                    \
     {                                           \

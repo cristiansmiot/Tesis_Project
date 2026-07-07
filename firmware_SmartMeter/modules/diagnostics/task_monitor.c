@@ -17,6 +17,7 @@ typedef struct {
     uint32_t timeout_ms;
     int64_t last_beat_us;     // esp_timer_get_time() del ultimo latido
     int64_t stalled_since_us; // 0 si no esta bloqueada
+    TaskHandle_t handle;      // capturado en el primer latido de la tarea
     bool registered;
     bool stalled;
 } TaskMonSlot_t;
@@ -54,6 +55,13 @@ void task_monitor_heartbeat(TaskMonId_t id)
     // segundos y tolera leer un valor a medio actualizar (solo causaria
     // un falso positivo/negativo transitorio de un ciclo, sin efectos).
     s_slots[id].last_beat_us = esp_timer_get_time();
+
+    // El latido llega desde la propia tarea: primer punto donde se conoce
+    // su handle sin acoplar el registro (task_manager no ve los handles
+    // estaticos de cada task_*_start).
+    if (s_slots[id].handle == NULL) {
+        s_slots[id].handle = xTaskGetCurrentTaskHandle();
+    }
 }
 
 bool task_monitor_is_stalled(TaskMonId_t id)
@@ -106,17 +114,49 @@ static void task_monitor_check_slot(TaskMonSlot_t *slot, int64_t now_us)
     }
 }
 
+/**
+ * Reporta la marca de agua de stack de las tareas supervisadas. La marca
+ * es el minimo historico de palabras libres: si se acerca a cero, la
+ * tarea esta a un pico de actividad de desbordar y corromper memoria.
+ * Ajustar TASK_STACK_* en rtos_app_config.h con estos datos en vez de
+ * dimensionar a ojo.
+ */
+static void task_monitor_log_stacks(void)
+{
+    for (int i = 0; i < (int)TASK_MON_COUNT; ++i) {
+        if (!s_slots[i].registered || (s_slots[i].handle == NULL)) {
+            continue;
+        }
+        const UBaseType_t libres = uxTaskGetStackHighWaterMark(s_slots[i].handle);
+        if (libres < METER_TASK_STACK_WARN_WORDS) {
+            LOG_WARN(TAG, "stack de '%s' al limite: %u palabras libres",
+                     s_slots[i].name, (unsigned)libres);
+        } else {
+            LOG_INFO(TAG, "stack '%s': %u palabras libres (minimo historico)",
+                     s_slots[i].name, (unsigned)libres);
+        }
+    }
+}
+
 static void task_supervisor(void *pvParameters)
 {
     (void)pvParameters;
     LOG_INFO(TAG, "supervisor activo (revision cada %u ms)",
              (unsigned)METER_TASK_MONITOR_PERIOD_MS);
 
+    uint32_t ciclos = 0U;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(METER_TASK_MONITOR_PERIOD_MS));
         const int64_t now_us = esp_timer_get_time();
         for (int i = 0; i < (int)TASK_MON_COUNT; ++i) {
             task_monitor_check_slot(&s_slots[i], now_us);
+        }
+
+        // Reporte de stacks cada N revisiones (~5 min con periodo de 5 s):
+        // suficiente para calibrar tamanos sin inundar el log.
+        ++ciclos;
+        if ((ciclos % METER_TASK_STACK_LOG_EVERY) == 0U) {
+            task_monitor_log_stacks();
         }
     }
 }

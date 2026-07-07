@@ -111,6 +111,10 @@
 // sigue sin latido. 10 minutos: suficiente para descartar recoveries
 // largos del modem y aun asi recuperar el nodo en campo sin visita.
 #define METER_TASK_STALL_REBOOT_MS             600000U
+// Marca de agua de stacks: reporte cada N revisiones del supervisor
+// (60 x 5 s = 5 min) y umbral de advertencia en palabras libres.
+#define METER_TASK_STACK_LOG_EVERY             60U
+#define METER_TASK_STACK_WARN_WORDS            256U
 
 // Buffer offline en MicroSD (store-and-forward)
 // Cuando MQTT no esta disponible las mediciones se anexan a un archivo
@@ -163,16 +167,17 @@
 #define METER_MQTT_PASSWORD                    "Colombia2026$"
 
 // ── Identidad del nodo (plug and play) ──────────────────────────────────
-// Los topics medidor/<id>/{datos,estado,alerta,conexion,cmd} y el CLIENTID
-// se construyen en runtime desde el IMEI del SIM7080G (ver mqtt_topics.h):
-// un mismo binario sirve para toda la flota y el backend auto-registra
-// cada IMEI nuevo. El fallback solo se usa si el IMEI no se pudo leer.
+// device_id = METER_MQTT_ID_PREFIX + MAC eFuse del ESP32-S3 (inmutable de
+// fabrica): sobrevive cambios de SIM y de modem, y esta disponible desde
+// el boot. Los topics medidor/<id>/* y el CLIENTID se construyen en
+// runtime (ver mqtt_topics.h); un mismo binario sirve para toda la flota.
+// El IMEI viaja como metadato en /estado, no como identidad.
 // QoS/retain por topic:
 // /datos   : QoS 0, retain=0, cada 60 s
 // /estado  : QoS 1, retain=1, cada 5 min
 // /alerta  : QoS 1, retain=0, event-driven
 // /conexion: QoS 1, retain=1 (online / LWT offline)
-#define METER_MQTT_ID_FROM_IMEI                1
+#define METER_MQTT_ID_PREFIX                   "SM"
 #define METER_MQTT_DEVICE_ID_FALLBACK          "ESP32-001"
 
 // LWT (Last Will and Testament): el broker publica "offline" en /conexion

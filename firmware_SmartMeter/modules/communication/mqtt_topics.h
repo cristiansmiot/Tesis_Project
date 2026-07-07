@@ -11,26 +11,26 @@ extern "C" {
 /**
  * Identidad MQTT del nodo resuelta en tiempo de ejecución.
  *
- * Con topics fijos en meter_config.h dos nodos con el mismo binario
- * colisionaban (ambos publicaban como ESP32-001). Aquí el device_id se
- * toma del IMEI del SIM7080G — único por módem, ya disponible tras
- * sim7080g_init() — y los topics medidor/<id>/{datos,estado,alerta,
- * conexion,cmd} se construyen una sola vez. El mismo binario sirve para
- * toda la flota y el backend auto-registra cada IMEI nuevo.
+ * El device_id se deriva de la MAC de fábrica del ESP32-S3 (eFuse BLK1,
+ * grabada por Espressif e inmutable), con el formato SM-XXXXXXXXXXXX.
+ * Se descartó usar el IMEI como identidad primaria: el IMEI pertenece al
+ * módem SIM7080G, así que sobrevive un cambio de SIM pero no una
+ * reparación que reemplace el módulo celular; la MAC del MCU acompaña al
+ * medidor durante toda su vida útil y además está disponible desde el
+ * primer instante del boot, sin esperar a que el módem responda. El IMEI
+ * sigue viajando como metadato en /estado para trazabilidad de la parte
+ * celular.
  *
- * Si el IMEI no está disponible (modo focus sin red, módem dañado) se usa
- * METER_MQTT_DEVICE_ID_FALLBACK para no dejar el nodo mudo.
+ * Con la identidad en runtime un mismo binario sirve para toda la flota:
+ * los topics medidor/<id>/{datos,estado,alerta,conexion,cmd} no chocan
+ * entre nodos y el backend auto-registra cada id nuevo.
  */
 
 /**
- * Resuelve el device_id y construye los topics. Idempotente: la primera
- * llamada con IMEI disponible fija la identidad; llamadas posteriores no
- * la cambian (los topics no deben mutar con la sesión MQTT ya abierta).
+ * Deriva el device_id de la MAC eFuse y construye los topics. Idempotente
+ * y sin dependencias de hardware externo; puede llamarse desde app_main.
  */
 esp_err_t mqtt_topics_init(void);
-
-/** @return true si la identidad ya quedó fijada desde el IMEI real. */
-bool mqtt_topics_id_es_imei(void);
 
 const char *mqtt_topics_device_id(void);
 const char *mqtt_topics_datos(void);

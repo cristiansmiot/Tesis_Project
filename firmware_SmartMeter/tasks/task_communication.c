@@ -195,8 +195,9 @@ static void task_communication(void *pvParameters)
                 goto cycle_delay;
             }
 
-            // Con el modem arriba el IMEI ya se leyo: fijar la identidad
-            // MQTT del nodo (topics medidor/<IMEI>/*) antes de conectar.
+            // Identidad del nodo (MAC eFuse) lista antes de configurar el
+            // perfil MQTT. Idempotente: normalmente ya la fijo la UI o el
+            // getter del LWT durante el arranque.
             (void)mqtt_topics_init();
 
             if (!sim7080g_is_pdp_ready()) {

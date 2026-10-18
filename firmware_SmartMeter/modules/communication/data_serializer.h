@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "meter_data.h"
+#include "system_contracts.h"
 
 esp_err_t data_serializer_init(void);
 
@@ -44,6 +45,11 @@ esp_err_t data_serializer_build_senml_alerta(const MeterData_t *snap,
                                               uint32_t pq_flags,
                                               char *out,
                                               size_t out_len);
+
+/** Serializa un evento comun de salud para el topic /alerta. */
+esp_err_t data_serializer_build_senml_system_event(const system_event_t *event,
+                                                   char *out,
+                                                   size_t out_len);
 
 esp_err_t data_serializer_build_snapshot_json(const MeterData_t *snap,
                                               char *out_json,

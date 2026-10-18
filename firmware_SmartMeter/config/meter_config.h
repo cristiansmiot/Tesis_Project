@@ -120,12 +120,31 @@
 // Cuando MQTT no esta disponible las mediciones se anexan a un archivo
 // JSONL en la SD; al recuperar sesion se drenan en lotes pequenos para
 // no retrasar la telemetria en vivo.
-#define METER_SD_BACKLOG_FILE                  "backlog.jsonl"
+#ifndef METER_SD_BASE_DIR
+#define METER_SD_BASE_DIR                      "smartmeter"
+#endif
+#define METER_SD_HISTORY_FILE                  METER_SD_BASE_DIR "/history_v1.csv"
+#define METER_SD_TELEMETRY_QUEUE_FILE          METER_SD_BASE_DIR "/telemetry_v1.jsonl"
+#define METER_SD_ALERT_QUEUE_FILE              METER_SD_BASE_DIR "/alerts_v1.jsonl"
+#define METER_SD_EVENT_LOG_FILE                METER_SD_BASE_DIR "/events_v1.jsonl"
+/* Adaptadores de nombre para perfiles de hardware existentes. */
+#define METER_SD_BACKLOG_FILE                  METER_SD_TELEMETRY_QUEUE_FILE
+#define METER_SD_ALERT_BACKLOG_FILE            METER_SD_ALERT_QUEUE_FILE
 #define METER_SD_BACKLOG_DRAIN_PER_CYCLE       8U
+#define METER_SD_HISTORY_PERIOD_MS             60000U
+#define METER_SD_USAGE_REFRESH_MS              10000U
+#define METER_SD_ALERT_RESERVE_MB               64U
+#define METER_SD_HISTORY_PURGE_BATCH            256U
+#define METER_SD_TELEMETRY_PURGE_BATCH          32U
 // Epoch minimo para considerar valida la hora del sistema (2020-01-01).
 // Sin hora valida no se bufferiza: una medicion sin timestamp real
 // llegaria al backend con hora de recepcion equivocada.
 #define METER_TIME_VALID_MIN_EPOCH             1577836800LL
+#define METER_RTC_POLL_MS                       60000U
+#define METER_RTC_RECOVERY_SLOW_MS              60000U
+#define METER_TASK_HB_TIMEOUT_TIME_MS            15000U
+#define METER_TIME_CELLULAR_RETRY_MS             60000U
+#define METER_TIME_CELLULAR_RESYNC_MS         21600000U
 
 // Sprint 3 - Comunicaciones SIM7080G + MQTT
 #define METER_COMM_ENABLE                      1
@@ -142,7 +161,9 @@
 // Modo de depuracion Sprint 3:
 // 1 = prioriza SIM7080G (omite ADE/metrologia y arranca solo task_communication)
 // 0 = arranque normal completo (ADE + metrologia + comunicacion)
+#ifndef METER_SIM7080G_FOCUS_MODE
 #define METER_SIM7080G_FOCUS_MODE              0
+#endif
 
 #define METER_SIM7080G_APN                     "internet.movistar.com.co"
 // SIM7080G usa normalmente:
@@ -231,6 +252,7 @@
 #define METER_UI_ACTION_STATUS_HOLD_MS         2500U
 #define METER_UI_SPLASH_DURATION_MS            6000U
 #define METER_UI_IDLE_HOME_TIMEOUT_MS          20000U
+#define METER_UI_OLED_RECOVERY_FAST_MS         2000U
 
 // Normalizacion de telemetria - SenML RFC 8428 activo
 // Unidades SenML usadas: V, A, W, VAR, VA, /, Hz, Wh, Cel, count
@@ -240,5 +262,4 @@
 #define METER_TELEMETRY_FORMAT                 METER_TELEMETRY_FORMAT_SENML_JSON
 
 #endif // METER_CONFIG_H
-
 

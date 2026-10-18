@@ -8,6 +8,7 @@
 #include "driver/i2c.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "i2c_shared.h"
 #include "logger.h"
 
 typedef struct {
@@ -112,7 +113,12 @@ static esp_err_t oled_driver_write_block(uint8_t control, const uint8_t *data, s
         err = i2c_master_stop(cmd);
     }
     if (err == ESP_OK) {
-        err = i2c_master_cmd_begin(OLED_I2C_PORT, cmd, pdMS_TO_TICKS(OLED_I2C_TIMEOUT_MS));
+        err = i2c_shared_lock(pdMS_TO_TICKS(OLED_I2C_TIMEOUT_MS));
+        if (err == ESP_OK) {
+            err = i2c_master_cmd_begin(OLED_I2C_PORT, cmd,
+                                       pdMS_TO_TICKS(OLED_I2C_TIMEOUT_MS));
+            i2c_shared_unlock();
+        }
     }
     i2c_cmd_link_delete(cmd);
     return err;
@@ -131,24 +137,9 @@ static esp_err_t oled_driver_write_data_chunk(const uint8_t *data, size_t count)
 esp_err_t oled_driver_init(void)
 {
     if (!s_i2c_ready) {
-        const i2c_config_t cfg = {
-            .mode = I2C_MODE_MASTER,
-            .sda_io_num = OLED_SDA,
-            .scl_io_num = OLED_SCL,
-            .sda_pullup_en = GPIO_PULLUP_ENABLE,
-            .scl_pullup_en = GPIO_PULLUP_ENABLE,
-            .master.clk_speed = OLED_I2C_CLK_HZ,
-            .clk_flags = 0,
-        };
-
-        esp_err_t err = i2c_param_config(OLED_I2C_PORT, &cfg);
+        const esp_err_t err = i2c_shared_init();
         if (err != ESP_OK) {
-            LOG_WARN(TAG, "i2c_param_config failed: %s", esp_err_to_name(err));
-            return err;
-        }
-        err = i2c_driver_install(OLED_I2C_PORT, cfg.mode, 0, 0, 0);
-        if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE)) {
-            LOG_WARN(TAG, "i2c_driver_install failed: %s", esp_err_to_name(err));
+            LOG_WARN(TAG, "shared I2C init failed: %s", esp_err_to_name(err));
             return err;
         }
         s_i2c_ready = true;

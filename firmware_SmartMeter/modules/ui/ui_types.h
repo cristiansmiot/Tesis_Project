@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include "ade9153a_init.h"
 #include "meter_data.h"
+#include "storage_service.h"
+#include "system_contracts.h"
 
 typedef enum {
     UI_VIEW_ROOT = 0,
@@ -52,6 +54,13 @@ typedef struct {
     uint32_t ade_recovery_successes;
     char action_status[32];
     char date_str[20];
+    char time_source[10];
+    bool time_valid;
+    system_health_snapshot_t health[SYSTEM_MODULE_COUNT];
+    storage_service_snapshot_t storage;
+    system_module_t primary_alert_module;
+    system_event_code_t primary_alert_code;
+    system_severity_t primary_alert_severity;
 } ui_display_context_t;
 
 #endif // UI_TYPES_H

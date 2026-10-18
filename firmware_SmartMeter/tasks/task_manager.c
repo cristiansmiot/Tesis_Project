@@ -11,6 +11,10 @@
 #include "task_monitor.h"
 #include "task_power_quality.h"
 #include "task_ui.h"
+#include "task_time.h"
+#include "system_event_dispatcher.h"
+#include "system_health.h"
+#include "storage_service.h"
 
 static const char *TAG = "task_manager";
 
@@ -47,6 +51,30 @@ esp_err_t task_manager_start(void)
 
     unsigned started = 0U;
 
+    if (storage_service_start() == ESP_OK) {
+        ++started;
+    } else {
+        LOG_ERROR(TAG, "storage service start failed; continuing without SD");
+        (void)system_health_report_failure(
+            SYSTEM_MODULE_SD, SYSTEM_EVENT_INIT_FAILED,
+            SYSTEM_SEVERITY_WARNING, ESP_FAIL,
+            "storage task creation failed");
+    }
+
+    if (system_event_dispatcher_start() == ESP_OK) {
+        ++started;
+    } else {
+        LOG_ERROR(TAG, "system event dispatcher start failed");
+    }
+
+    if (task_time_start() == ESP_OK) {
+        task_monitor_register(TASK_MON_TIME, "time",
+                              METER_TASK_HB_TIMEOUT_TIME_MS);
+        ++started;
+    } else {
+        LOG_ERROR(TAG, "task_time start failed");
+    }
+
     if (METER_SIM7080G_FOCUS_MODE != 0) {
         if (task_communication_start() == ESP_OK) {
             task_monitor_register(TASK_MON_COMMUNICATION, "comm",
@@ -81,12 +109,21 @@ esp_err_t task_manager_start(void)
             LOG_ERROR(TAG, "task_measurement create failed");
         }
 
-        if (task_power_quality_start() == ESP_OK) {
+        (void)system_health_mark_recovering(SYSTEM_MODULE_PQ,
+                                            "PQ task initialization");
+        const esp_err_t pq_err = task_power_quality_start();
+        if (pq_err == ESP_OK) {
             task_monitor_register(TASK_MON_POWER_QUALITY, "power_quality",
                                   METER_TASK_HB_TIMEOUT_PQ_MS);
+            (void)system_health_report_ok(SYSTEM_MODULE_PQ,
+                                          "PQ task ready");
             ++started;
         } else {
             LOG_ERROR(TAG, "task_power_quality start failed");
+            (void)system_health_report_failure(
+                SYSTEM_MODULE_PQ, SYSTEM_EVENT_INIT_FAILED,
+                SYSTEM_SEVERITY_WARNING, pq_err,
+                "PQ task initialization failed");
         }
         // Calibracion queda fuera del monitor: es event-driven y pasa la
         // mayor parte del tiempo bloqueada en su cola, sin latido que dar.

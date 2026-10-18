@@ -10,12 +10,20 @@
 extern "C" {
 #endif
 
+typedef struct {
+    bool ready;
+    bool oscillator_stopped;
+    bool eosc_set;
+    bool time_valid;
+    time_t epoch_utc;
+} ds3231_status_t;
+
 /**
  * @brief Inicializa el RTC DS3231 sobre el bus I2C compartido con OLED.
  *
- * Verifica que el chip responde y limpia el flag OSF (Oscillator Stopped)
- * si es la primera vez que arranca con bateria nueva. Es seguro llamarlo
- * multiples veces (idempotente).
+ * Verifica que el chip responde y que EOSC permanece en cero. OSF no se
+ * limpia durante init: se conserva como evidencia hasta escribir y releer
+ * una hora autoritativa valida. Es seguro llamarlo multiples veces.
  *
  * @return ESP_OK si el RTC responde.
  */
@@ -23,6 +31,12 @@ esp_err_t ds3231_init(void);
 
 /** @return true si ds3231_init() ya completo exitosamente. */
 bool ds3231_is_ready(void);
+
+/** Estado del dispositivo y de la fecha almacenada. */
+esp_err_t ds3231_get_status(ds3231_status_t *out_status);
+
+/** Fuerza un nuevo probe en la siguiente inicializacion. */
+void ds3231_invalidate(void);
 
 /**
  * @brief Lee la hora actual del RTC en formato UTC.
@@ -51,6 +65,9 @@ esp_err_t ds3231_get_epoch(time_t *out_epoch);
  * @return ESP_OK en exito.
  */
 esp_err_t ds3231_get_temperature(float *out_c);
+
+/** Convierte un calendario UTC a epoch sin depender de la TZ global. */
+esp_err_t ds3231_tm_to_epoch_utc(const struct tm *tm, time_t *out_epoch);
 
 #ifdef __cplusplus
 }

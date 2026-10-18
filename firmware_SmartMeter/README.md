@@ -17,6 +17,7 @@ creadas en `tasks/task_manager.c`.
 | task_power_quality | 1 | 4 | 250 ms | Detección sag/swell, flags PQ |
 | task_calibration | — | 3 | event-driven | Calibración mSure, persistencia NVS |
 | task_communication | 1 | 2 | 60 s | Sesión celular+MQTT, SenML, comandos remotos, backlog SD |
+| task_time | — | 2 | 60 s | RTC, UTC, sincronización celular/remota y recuperación aislada |
 | task_ui | — | 1 | poll | OLED + teclado |
 | task_supervisor | any | 6 | 5 s | Watchdog por software (ver abajo) |
 
@@ -41,7 +42,8 @@ nodo completo.
 - **Hora**: al boot se siembra el reloj del sistema desde el DS3231; al
   registrar en red se sincroniza vía `AT+CCLK` (sistema + RTC). Sin hora
   válida no se bufferiza (una muestra sin timestamp real es peor que
-  perderla).
+  perderla). El diseño y sus pruebas están en
+  [`docs/RTC_TIME_SERVICE.md`](docs/RTC_TIME_SERVICE.md).
 
 ## Comandos remotos (topic `medidor/{id}/cmd`)
 
@@ -73,7 +75,7 @@ hay que listarlo ahí.
 
 Todo lo ajustable está en `config/`:
 
-- `board_config.h` — pines (ADE en SPI2, SD en SPI3 dedicado, I2C compartido
+- `board_config.h` — pines (ADE y SD comparten SPI2 con CS separados, I2C compartido
   OLED+RTC, UART1 para SIM7080G).
 - `meter_config.h` — periodos, APN, umbrales de supervisión y backlog.
 - `rtos_app_config.h` — prioridades, stacks y colas.

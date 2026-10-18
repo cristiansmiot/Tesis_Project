@@ -30,6 +30,9 @@
 #define SIM7080G_UART_TX        16
 #define SIM7080G_UART_RX        17
 #define SIM7080G_UART_NUM       1
+// La PCB conecta el pin PWR del HAT Waveshare a GPIO4. El HAT incorpora
+// un transistor NPN: PWR se mantiene en LOW y se pulsa con HIGH.
+#define SIM7080G_PIN_PWRKEY     4
 // En pruebas reales el modulo responde estable a 57600.
 // El init mantiene auto-probe como respaldo.
 #define SIM7080G_BAUD_RATE      57600
@@ -50,15 +53,13 @@
 #define DS3231_I2C_ADDR         0x68
 #define DS3231_I2C_TIMEOUT_MS   250U
 
-// Sprint 6 - MicroSD Card (bus SPI3_HOST dedicado, aislado del ADE9153A)
-// Pines elegidos contiguos en el header J3 y lejos de strapping/JTAG:
-// 4, 5, 6, 7 son GPIOs generales sin funciones especiales en ESP32-S3.
-// Evitamos compartir SPI2_HOST con ADE para no arriesgar el muestreo
-// de 4 kHz del metrologia.
-#define SD_SPI_HOST             SPI3_HOST
-#define SD_PIN_MOSI             4
-#define SD_PIN_MISO             5
-#define SD_PIN_SCLK             6
+// Sprint 6 - MicroSD Card. La PCB comparte MOSI/MISO/SCLK con el ADE9153A
+// sobre SPI2_HOST; cada dispositivo conserva un CS independiente.
+// Esquema PCB: MOSI=GPIO11, SCLK=GPIO12, MISO=GPIO13, SD_CS=GPIO7.
+#define SD_SPI_HOST             ADE9153A_SPI_HOST
+#define SD_PIN_MOSI             ADE9153A_PIN_MOSI
+#define SD_PIN_MISO             ADE9153A_PIN_MISO
+#define SD_PIN_SCLK             ADE9153A_PIN_SCLK
 #define SD_PIN_CS               7
 // Frecuencia de operacion; en init se usa 400 kHz por SPI_SDIO.
 #define SD_SPI_CLK_HZ           20000000

@@ -158,7 +158,9 @@ esp_err_t ade9153a_spi_init(void)
         .sclk_io_num = ADE9153A_PIN_SCLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 16
+        // La PCB comparte este bus con la microSD, que transfiere bloques
+        // de 512 B. Reservar margen suficiente aunque ADE use tramas cortas.
+        .max_transfer_sz = 4096
     };
 
     err = spi_bus_initialize(ADE9153A_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);

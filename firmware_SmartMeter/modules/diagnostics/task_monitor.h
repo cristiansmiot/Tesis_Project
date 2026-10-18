@@ -18,8 +18,9 @@ extern "C" {
  * del SIM7080G) quede detectado y reportado sin tumbar la medicion ni
  * la UI. Cada tarea registrada reporta latidos; una tarea supervisora
  * de baja prioridad detecta latidos vencidos, los registra como falla
- * (FAULT_TASK_STALL) y solo escala a esp_restart() si la tarea sigue
- * bloqueada mas alla de METER_TASK_STALL_REBOOT_MS.
+ * (FAULT_TASK_STALL) y solo escala a esp_restart() si una tarea esencial de
+ * medicion/calidad de potencia sigue bloqueada mas alla de
+ * METER_TASK_STALL_REBOOT_MS. Comunicacion y UI nunca reinician el nodo.
  */
 
 typedef enum {
@@ -27,6 +28,7 @@ typedef enum {
     TASK_MON_POWER_QUALITY,
     TASK_MON_COMMUNICATION,
     TASK_MON_UI,
+    TASK_MON_TIME,
     TASK_MON_COUNT,
 } TaskMonId_t;
 

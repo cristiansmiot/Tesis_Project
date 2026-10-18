@@ -7,6 +7,7 @@
 #include "meter_config.h"
 #include "mqtt_topics.h"
 #include "oled_driver.h"
+#include "system_health.h"
 
 static bool s_initialized;
 
@@ -61,25 +62,60 @@ static const char *display_manager_ac_badge(const ui_display_context_t *ctx)
     return "OK";
 }
 
-static unsigned long display_manager_count_2d(uint32_t value)
-{
-    return (unsigned long)((value > 99U) ? 99U : value);
-}
-
 static const char *display_manager_ade_status(const ui_display_context_t *ctx)
 {
+#if (METER_SIM7080G_FOCUS_MODE != 0)
+    (void)ctx;
+    return "--";
+#else
     if ((ctx == NULL) || !ctx->ade.ready || ctx->ade.bus_disconnected) {
         return "ER";
     }
     return "OK";
+#endif
 }
 
-static const char *display_manager_bus_status(const ui_display_context_t *ctx)
+static const char *display_manager_short_state(system_state_t state)
 {
-    if ((ctx == NULL) || !ctx->ade.ready) {
-        return "ERR";
+    switch (state) {
+        case SYSTEM_STATE_OK:         return "OK";
+        case SYSTEM_STATE_DISABLED:   return "--";
+        case SYSTEM_STATE_RECOVERING: return "REC";
+        case SYSTEM_STATE_DEGRADED:   return "DEG";
+        case SYSTEM_STATE_FAILED:     return "FAIL";
+        default:                      return "--";
     }
-    return ctx->ade.bus_disconnected ? "LOST" : "OK";
+}
+
+static esp_err_t display_manager_render_alert(const ui_display_context_t *ctx)
+{
+    const system_health_snapshot_t *alert =
+        &ctx->health[ctx->primary_alert_module];
+    (void)display_manager_write_line(
+        0U, "! %s %s",
+        (ctx->primary_alert_severity == SYSTEM_SEVERITY_CRITICAL)
+            ? "CRITICAL" : "WARNING",
+        system_module_name(ctx->primary_alert_module));
+    (void)display_manager_write_line(1U, "%s",
+                                     system_event_code_name(ctx->primary_alert_code));
+    (void)display_manager_write_line(2U, "STATE:%s ERR:%ld",
+                                     display_manager_short_state(alert->state),
+                                     (long)alert->last_error);
+    (void)display_manager_write_line(3U, "SD:%s %u%% Q:%lu",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_SD].state),
+        (unsigned)ctx->storage.used_percent,
+        (unsigned long)(ctx->storage.telemetry_pending +
+                        ctx->storage.alerts_pending));
+    (void)display_manager_write_line(4U, "TIME:%s RTC:%s",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_TIME].state),
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_RTC].state));
+    (void)display_manager_write_line(5U, "CEL:%s MQTT:%s",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_CELLULAR].state),
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_MQTT].state));
+    (void)display_manager_write_line(6U, "ADE:%s",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_ADE].state));
+    return display_manager_write_line(7U, "%s",
+        ctx->time_valid ? ctx->date_str : "-- SIN FECHA --");
 }
 
 static esp_err_t display_manager_render_home(const ui_display_context_t *ctx)
@@ -88,12 +124,21 @@ static esp_err_t display_manager_render_home(const ui_display_context_t *ctx)
     (void)display_manager_write_line(1U, "  MEDIDOR INTELIGENTE");
     (void)display_manager_write_line(2U, "");
     (void)display_manager_write_line(3U, " CONSUMO: %.2f WH", (double)ctx->meter.energy_wh);
-    (void)display_manager_write_line(4U, "");
+    (void)display_manager_write_line(4U, " SD:%s %u%% Q:%lu",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_SD].state),
+        (unsigned)ctx->storage.used_percent,
+        (unsigned long)(ctx->storage.telemetry_pending +
+                        ctx->storage.alerts_pending));
     const char *ic_cel = ctx->cellular_connected ? "CEL:OK" : "CEL:--";
     const char *ic_mqt = ctx->mqtt_connected ? "MQT:OK" : "MQT:--";
+#if (METER_SIM7080G_FOCUS_MODE != 0)
+    const char *ic_ade = "ADE:--";
+#else
     const char *ic_ade = (ctx->ade.ready && !ctx->ade.bus_disconnected) ? "ADE:OK" : "ADE:ER";
+#endif
     (void)display_manager_write_line(5U, " %s %s %s", ic_cel, ic_mqt, ic_ade);
-    (void)display_manager_write_line(6U, "");
+    (void)display_manager_write_line(6U, " HORA:%s",
+                                     ctx->time_valid ? ctx->time_source : "INVALIDA");
     if (ctx->date_str[0] != '\0') {
         (void)display_manager_write_line(7U, "  %s", ctx->date_str);
     } else {
@@ -146,19 +191,24 @@ static esp_err_t display_manager_render_comms(const ui_display_context_t *ctx)
 {
     (void)display_manager_write_line(0U, "    ESTADO NODOS");
     (void)display_manager_write_line(1U, "----------------");
-    (void)display_manager_write_line(2U, "ADE9153A   : %s",
-                                     (ctx->ade.ready && !ctx->ade.bus_disconnected) ? "OK" : "ERROR");
-    (void)display_manager_write_line(3U, "SIM7080G   : %s",
-                                     ctx->cellular_connected ? "CONECTADO" : "SIN RED");
-    (void)display_manager_write_line(4U, "MQTT BROKER: %s",
-                                     ctx->mqtt_connected ? "CONECTADO" : "DESCONECT");
-    (void)display_manager_write_line(5U, "BUS SPI    : %s",
-                                     display_manager_bus_status(ctx));
-    (void)display_manager_write_line(6U, "LINEA AC   : %s",
-                                     display_manager_ac_badge(ctx));
-    return display_manager_write_line(7U, "REC:%s CNT:%02lu",
-                                     display_manager_action_name(ctx->ade.last_action),
-                                     display_manager_count_2d(ctx->ade.recovery_count));
+    (void)display_manager_write_line(2U, "SD:%s %u%% Q:%lu",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_SD].state),
+        (unsigned)ctx->storage.used_percent,
+        (unsigned long)(ctx->storage.telemetry_pending +
+                        ctx->storage.alerts_pending));
+    (void)display_manager_write_line(3U, "TIME:%s RTC:%s",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_TIME].state),
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_RTC].state));
+    (void)display_manager_write_line(4U, "CEL:%s MQTT:%s",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_CELLULAR].state),
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_MQTT].state));
+    (void)display_manager_write_line(5U, "ADE:%s",
+        display_manager_short_state(ctx->health[SYSTEM_MODULE_ADE].state));
+    (void)display_manager_write_line(6U, "WR:%lu ERR:%lu",
+        (unsigned long)ctx->storage.writes_ok,
+        (unsigned long)ctx->storage.writes_failed);
+    return display_manager_write_line(7U, "%s",
+        ctx->time_valid ? ctx->date_str : "-- SIN FECHA --");
 }
 
 static esp_err_t display_manager_render_ade(const ui_display_context_t *ctx)
@@ -184,6 +234,17 @@ static esp_err_t display_manager_render_ade(const ui_display_context_t *ctx)
 
 static esp_err_t display_manager_render_actions(const ui_menu_state_t *state, const ui_display_context_t *ctx)
 {
+#if (METER_SIM7080G_FOCUS_MODE != 0)
+    (void)state;
+    (void)display_manager_write_line(0U, "ACCIONES");
+    (void)display_manager_write_line(1U, "----------------");
+    (void)display_manager_write_line(2U, "ADE: DISABLED");
+    (void)display_manager_write_line(3U, "");
+    (void)display_manager_write_line(4U, "SIN ACCIONES ADE");
+    (void)display_manager_write_line(5U, "");
+    (void)display_manager_write_line(6U, "%s", ctx->action_status);
+    return display_manager_write_line(7U, "BACK:MENU");
+#else
     (void)display_manager_write_line(0U, "ACCIONES ADE");
     (void)display_manager_write_line(1U, "%c PROBE ADE", (state->action_index == 0U) ? '>' : ' ');
     (void)display_manager_write_line(2U, "%c SOFT INIT", (state->action_index == 1U) ? '>' : ' ');
@@ -192,6 +253,7 @@ static esp_err_t display_manager_render_actions(const ui_menu_state_t *state, co
     (void)display_manager_write_line(5U, "%c CALIBRAR", (state->action_index == 4U) ? '>' : ' ');
     (void)display_manager_write_line(6U, "%s", ctx->action_status);
     return display_manager_write_line(7U, "SEL:OK HOLD:MENU");
+#endif
 }
 
 esp_err_t display_manager_show_splash(void)
@@ -245,7 +307,10 @@ esp_err_t display_manager_render(const ui_menu_state_t *state,
         return err;
     }
 
-    if (state->view == UI_VIEW_HOME) {
+    if ((context->primary_alert_code != SYSTEM_EVENT_CODE_NONE) &&
+        (context->primary_alert_severity >= SYSTEM_SEVERITY_WARNING)) {
+        err = display_manager_render_alert(context);
+    } else if (state->view == UI_VIEW_HOME) {
         err = display_manager_render_home(context);
     } else if (state->view == UI_VIEW_ROOT) {
         err = display_manager_render_root(state);

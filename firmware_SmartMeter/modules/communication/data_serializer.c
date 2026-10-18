@@ -9,6 +9,7 @@
 #include "node_health.h"    // node_health_get_rssi_dbm(), get_msg_tx(), get_reconnects()
 #include "pq_monitor.h"     // PQ_FLAG_SAG, PQ_FLAG_SWELL, PQ_FLAG_FREQ_OOR, PQ_FLAG_OVERTEMP
 #include "sim7080g_init.h"  // sim7080g_get_imei()
+#include "system_health.h"
 #include "logger.h"
 
 static const char *TAG = "data_serializer";
@@ -297,6 +298,56 @@ esp_err_t data_serializer_build_senml_alerta(const MeterData_t *snap,
 
     if ((len <= 0) || ((size_t)len >= out_len)) {
         LOG_WARN(TAG, "SenML /alerta truncado (len=%d out_len=%u)", len, (unsigned)out_len);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+esp_err_t data_serializer_build_senml_system_event(const system_event_t *event,
+                                                   char *out,
+                                                   size_t out_len)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if ((event == NULL) || (out == NULL) || (out_len < 384U)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char event_id[24];
+    (void)snprintf(event_id, sizeof(event_id), "%08lx-%08lx",
+                   (unsigned long)event->boot_id,
+                   (unsigned long)event->sequence);
+    const double bt = event->time_valid ? (double)event->timestamp_utc_s : 0.0;
+
+    const int len = snprintf(
+        out, out_len,
+        "[{\"bn\":\"urn:dev:serial:%s:/\",\"bt\":%.3f},"
+        "{\"n\":\"event_id\",\"vs\":\"%s\"},"
+        "{\"n\":\"module\",\"vs\":\"%s\"},"
+        "{\"n\":\"code\",\"vs\":\"%s\"},"
+        "{\"n\":\"severity\",\"vs\":\"%s\"},"
+        "{\"n\":\"transition\",\"vs\":\"%s\"},"
+        "{\"n\":\"state\",\"vs\":\"%s\"},"
+        "{\"n\":\"time_valid\",\"vb\":%s},"
+        "{\"n\":\"uptime_ms\",\"u\":\"ms\",\"v\":%lld},"
+        "{\"n\":\"error\",\"v\":%ld},"
+        "{\"n\":\"count\",\"u\":\"count\",\"v\":%lu}]",
+        mqtt_topics_device_id(),
+        bt,
+        event_id,
+        system_module_name(event->module),
+        system_event_code_name(event->code),
+        system_severity_name(event->severity),
+        system_event_transition_name(event->transition),
+        system_state_name(event->resulting_state),
+        event->time_valid ? "true" : "false",
+        (long long)(event->uptime_us / 1000LL),
+        (long)event->error,
+        (unsigned long)event->occurrence_count);
+    if ((len <= 0) || ((size_t)len >= out_len)) {
+        LOG_WARN(TAG, "SenML system event truncado (len=%d out_len=%u)",
+                 len, (unsigned)out_len);
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;

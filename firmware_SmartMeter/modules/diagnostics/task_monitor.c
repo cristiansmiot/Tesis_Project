@@ -9,6 +9,7 @@
 #include "logger.h"
 #include "meter_config.h"
 #include "rtos_app_config.h"
+#include "system_health.h"
 
 static const char *TAG = "task_monitor";
 
@@ -25,6 +26,23 @@ typedef struct {
 static TaskMonSlot_t s_slots[TASK_MON_COUNT];
 static uint32_t s_stall_events;
 static TaskHandle_t s_supervisor_handle;
+
+static bool task_monitor_is_essential(TaskMonId_t id)
+{
+    return (id == TASK_MON_MEASUREMENT) ||
+           (id == TASK_MON_POWER_QUALITY);
+}
+
+static bool task_monitor_has_other_stall(const TaskMonSlot_t *recovered)
+{
+    for (int i = 0; i < (int)TASK_MON_COUNT; ++i) {
+        if ((&s_slots[i] != recovered) && s_slots[i].registered &&
+            s_slots[i].stalled) {
+            return true;
+        }
+    }
+    return false;
+}
 
 esp_err_t task_monitor_init(void)
 {
@@ -77,7 +95,9 @@ uint32_t task_monitor_get_stall_events(void)
     return s_stall_events;
 }
 
-static void task_monitor_check_slot(TaskMonSlot_t *slot, int64_t now_us)
+static void task_monitor_check_slot(TaskMonId_t id,
+                                    TaskMonSlot_t *slot,
+                                    int64_t now_us)
 {
     if (!slot->registered) {
         return;
@@ -100,7 +120,8 @@ static void task_monitor_check_slot(TaskMonSlot_t *slot, int64_t now_us)
             // gracia, el reinicio completo es preferible a un nodo que
             // aparenta estar vivo pero no publica ni mide.
             const int64_t stalled_us = now_us - slot->stalled_since_us;
-            if (stalled_us > ((int64_t)METER_TASK_STALL_REBOOT_MS * 1000LL)) {
+            if (task_monitor_is_essential(id) &&
+                (stalled_us > ((int64_t)METER_TASK_STALL_REBOOT_MS * 1000LL))) {
                 LOG_ERROR(TAG, "tarea '%s' bloqueada %lld s - reiniciando nodo",
                           slot->name, (long long)(stalled_us / 1000000LL));
                 vTaskDelay(pdMS_TO_TICKS(200)); // tiempo para drenar el log
@@ -110,6 +131,10 @@ static void task_monitor_check_slot(TaskMonSlot_t *slot, int64_t now_us)
     } else if (slot->stalled) {
         slot->stalled = false;
         slot->stalled_since_us = 0;
+        if (!task_monitor_has_other_stall(slot)) {
+            (void)system_health_report_ok(SYSTEM_MODULE_SYSTEM,
+                                          "task heartbeat recovered");
+        }
         LOG_WARN(TAG, "tarea '%s' recupero el latido", slot->name);
     }
 }
@@ -149,7 +174,7 @@ static void task_supervisor(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(METER_TASK_MONITOR_PERIOD_MS));
         const int64_t now_us = esp_timer_get_time();
         for (int i = 0; i < (int)TASK_MON_COUNT; ++i) {
-            task_monitor_check_slot(&s_slots[i], now_us);
+            task_monitor_check_slot((TaskMonId_t)i, &s_slots[i], now_us);
         }
 
         // Reporte de stacks cada N revisiones (~5 min con periodo de 5 s):

@@ -1007,12 +1007,45 @@ const char *sim7080g_get_imei(void)
     return s_imei;
 }
 
+static bool sim_time_fields_valid(unsigned yy, unsigned month, unsigned day,
+                                  unsigned hour, unsigned minute,
+                                  unsigned second, int tz_quarters)
+{
+    static const uint8_t days_per_month[] = {
+        31U, 28U, 31U, 30U, 31U, 30U, 31U, 31U, 30U, 31U, 30U, 31U
+    };
+    if ((yy < 20U) || (yy > 99U) || (month < 1U) || (month > 12U) ||
+        (hour > 23U) || (minute > 59U) || (second > 59U) ||
+        (tz_quarters < -48) || (tz_quarters > 56)) {
+        return false;
+    }
+    unsigned max_day = days_per_month[month - 1U];
+    const unsigned year = 2000U + yy;
+    if ((month == 2U) && ((year % 4U) == 0U)) {
+        max_day = 29U;
+    }
+    return (day >= 1U) && (day <= max_day);
+}
+
+static int64_t sim_days_from_civil(int year, unsigned month, unsigned day)
+{
+    year -= (month <= 2U) ? 1 : 0;
+    const int era = (year >= 0 ? year : year - 399) / 400;
+    const unsigned yoe = (unsigned)(year - era * 400);
+    const unsigned shifted_month = (month > 2U) ? month - 3U : month + 9U;
+    const unsigned doy = (153U * shifted_month + 2U) / 5U + day - 1U;
+    const unsigned doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;
+    return (int64_t)era * 146097LL + (int64_t)doe - 719468LL;
+}
+
 esp_err_t sim7080g_sync_network_time(void)
 {
     if (!sim7080g_hal_is_ready()) {
         return ESP_ERR_INVALID_STATE;
     }
 
+    s_network_epoch = 0;
+    s_network_time[0] = '\0';
     char resp[80] = {0};
     esp_err_t err = sim7080g_hal_send_cmd("AT+CCLK?", "+CCLK:", resp, sizeof(resp),
                                           METER_SIM7080G_AT_TIMEOUT_MS, 1U);
@@ -1031,12 +1064,9 @@ esp_err_t sim7080g_sync_network_time(void)
     int tz_quarters = 0;
     const int parsed = sscanf(q1, "%u/%u/%u,%u:%u:%u%d",
                               &yy, &mo, &dd, &hh, &mi, &ss, &tz_quarters);
-    if (parsed < 5) {
+    if ((parsed != 7) ||
+        !sim_time_fields_valid(yy, mo, dd, hh, mi, ss, tz_quarters)) {
         return ESP_ERR_INVALID_RESPONSE;
-    }
-    // Reject default/invalid time (year 0 or 80 means not synced)
-    if ((yy == 0U) || (yy == 80U)) {
-        return ESP_ERR_NOT_FOUND;
     }
     // Acotar a uint8_t para que el compilador pueda calcular el tamano
     // maximo del snprintf (2 digitos por campo).
@@ -1050,23 +1080,11 @@ esp_err_t sim7080g_sync_network_time(void)
                    (unsigned)yy8, (unsigned)mo8, (unsigned)dd8,
                    (unsigned)hh8, (unsigned)mi8);
 
-    // Epoch UTC para sincronizar reloj del sistema y RTC DS3231.
-    // mktime() interpreta hora local; ESP-IDF arranca con TZ=UTC por
-    // defecto, asi que el resultado es epoch directo. El offset CCLK se
-    // resta porque la hora reportada es local de la red, no UTC.
-    if (parsed >= 6) {
-        struct tm t = {0};
-        t.tm_year = (int)(2000U + yy) - 1900;
-        t.tm_mon  = (int)mo - 1;
-        t.tm_mday = (int)dd;
-        t.tm_hour = (int)hh;
-        t.tm_min  = (int)mi;
-        t.tm_sec  = (int)ss;
-        const time_t local_epoch = mktime(&t);
-        if (local_epoch > 0) {
-            s_network_epoch = local_epoch - ((time_t)tz_quarters * 15 * 60);
-        }
-    }
+    const int64_t local_epoch =
+        sim_days_from_civil((int)(2000U + yy), mo, dd) * 86400LL +
+        (int64_t)hh * 3600LL + (int64_t)mi * 60LL + (int64_t)ss;
+    s_network_epoch = (time_t)(local_epoch -
+        ((int64_t)tz_quarters * 15LL * 60LL));
     return ESP_OK;
 }
 

@@ -23,6 +23,7 @@
 #include "task_monitor.h"
 #include "temperature.h"
 #include "voltage.h"
+#include "system_health.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "fault_handler.h"
@@ -212,7 +213,8 @@ static void task_measurement_try_ade_recovery(const char *reason, int64_t now_us
         s_ade_recovery_fail_streak = 0U;
         s_ade_ready_confirmed = true;
         node_health_ade_recovery_success_inc();
-        fault_clear_last();
+        (void)system_health_report_ok(SYSTEM_MODULE_ADE,
+                                      "ADE automatic recovery successful");
     }
 
     s_last_recovery_us = now_us;
@@ -447,8 +449,18 @@ void task_measurement(void *pvParameters)
     s_last_recovery_us = -((int64_t)METER_ADE_RECOVERY_COOLDOWN_MS) * 1000LL;
     s_ade_ready_confirmed = false;
 
-    if (task_measurement_energy_nvs_init() != ESP_OK) {
+    (void)system_health_mark_recovering(SYSTEM_MODULE_NVS,
+                                        "energy NVS initialization");
+    const esp_err_t nvs_err = task_measurement_energy_nvs_init();
+    if (nvs_err != ESP_OK) {
         LOG_WARN(TAG, "energy NVS unavailable - using volatile runtime total");
+        (void)system_health_report_failure(
+            SYSTEM_MODULE_NVS, SYSTEM_EVENT_INIT_FAILED,
+            SYSTEM_SEVERITY_WARNING, nvs_err,
+            "energy NVS unavailable");
+    } else {
+        (void)system_health_report_ok(SYSTEM_MODULE_NVS,
+                                      "energy NVS ready");
     }
 
     ade9153a_diag_t boot_diag = {0};

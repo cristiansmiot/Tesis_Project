@@ -1,6 +1,7 @@
 """Comandos - Envío de comandos a dispositivos via MQTT"""
 import json
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -36,7 +37,7 @@ COMANDOS_VALIDOS = {
         "payload": "relay_on",
     },
     "sincronizar_hora": {
-        "descripcion": "Sincroniza el reloj del dispositivo con el servidor",
+        "descripcion": "Sincroniza ESP32 y RTC con epoch UTC del servidor",
         "payload": "sync_time",
     },
     "solicitar_estado": {
@@ -61,6 +62,18 @@ class ComandoResponse(BaseModel):
     device_id: str
     comando: str
     topic: str
+
+
+def construir_payload_comando(comando: str, ahora_utc: Optional[datetime] = None) -> str:
+    """Construye el payload MQTT; la hora siempre proviene del servidor."""
+    payload = str(COMANDOS_VALIDOS[comando]["payload"])
+    if comando != "sincronizar_hora":
+        return payload
+
+    ahora = ahora_utc or datetime.now(timezone.utc)
+    if ahora.tzinfo is None:
+        ahora = ahora.replace(tzinfo=timezone.utc)
+    return f"sync_time:{int(ahora.timestamp())}"
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -115,8 +128,9 @@ def enviar_comando(
         )
 
     # Construir payload (string plano que el firmware compara con strcmp)
-    comando_info = COMANDOS_VALIDOS[datos.comando]
-    payload_str: str = comando_info["payload"]
+    # El servidor es la fuente autoritativa. No se acepta un epoch enviado por
+    # el cliente HTTP, evitando fechas arbitrarias o desactualizadas.
+    payload_str = construir_payload_comando(datos.comando)
 
     # Publicar en MQTT — topic con sufijo "cmd" según firmware
     topic = f"medidor/{device_id}/cmd"

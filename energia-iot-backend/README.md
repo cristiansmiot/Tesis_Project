@@ -21,11 +21,16 @@ El backend cumple dos roles que corren en el mismo proceso:
 | `medidor/{id}/datos` | Mediciones eléctricas (SenML) | Persiste en `mediciones`; si `bt` trae epoch absoluto (backlog SD del nodo) respeta esa hora |
 | `medidor/{id}/estado` | Salud del nodo (SenML) | Actualiza `nodo_salud` y métricas de confiabilidad |
 | `medidor/{id}/alerta` | Eventos de calidad de potencia | Crea registros en `eventos` |
-| `medidor/{id}/conexion` | `online`/`offline` (LWT, retained) | Marca conectado/desconectado |
+| `medidor/{id}/conexion` | Presencia legacy de firmware anterior | Compatible, pero no es fuente de verdad |
 
 Los comandos viajan en sentido contrario por `medidor/{id}/cmd` como string
-plano (`reset`, `relay_off`, `relay_on`, `sync_time`, `status`, `calibrate`)
+plano (`reset`, `relay_off`, `relay_on`, `sync_time:<epoch_utc>`, `status`, `calibrate`)
 — ver `routers/comandos.py`.
+
+La presencia se determina por frescura de `ultima_conexion` (`last_seen`): los
+mensajes MQTT vivos actualizan el campo y el servidor marca offline tras
+`OFFLINE_UMBRAL_MIN` (5 minutos por defecto). Los mensajes retained y el LWT
+no se usan como fuente de verdad.
 
 ## Ejecución local
 

@@ -1,11 +1,8 @@
 """Marca como desconectados los dispositivos que dejaron de publicar.
 
-El flag `conectado` se enciende cuando llega tráfico MQTT y el LWT del
-broker lo apaga, pero si el backend estaba caído cuando el broker publicó
-el LWT (o el nodo murió sin LWT) el flag queda pegado en True para
-siempre. Este refresco por frescura de `ultima_conexion` es la fuente de
-verdad: se ejecuta al leer dashboard o listados, de modo que la UI nunca
-muestra online un medidor que lleva días mudo.
+La frescura de `ultima_conexion` (last_seen) es la fuente de verdad. El
+refresco se ejecuta al leer dashboard o listados, de modo que la UI no depende
+de LWT ni muestra online un medidor que lleva días mudo.
 """
 import logging
 from datetime import datetime, timedelta, timezone

@@ -205,7 +205,7 @@ class MQTTClient:
         Soporta tres formatos de payload:
           1. SenML RFC 8428  → payload es un JSON array  (list)
           2. JSON plano      → payload es un JSON object (dict)  [legacy]
-          3. Texto plano     → "online" / "offline" en topic /conexion
+          3. Texto plano     → presencia legacy en topic /conexion
         """
         try:
             topic = msg.topic
@@ -238,7 +238,7 @@ class MQTTClient:
                 if es_retained:
                     logger.debug(f"/conexion retained de {device_id} ignorado")
                     return
-                self._process_lwt(device_id, raw_payload)
+                self._process_legacy_presence(device_id, raw_payload)
                 return
 
             # Parsear payload: SenML (list) o JSON plano (dict)
@@ -591,13 +591,12 @@ class MQTTClient:
         except Exception as e:
             logger.error(f"Error procesando /estado: {e}", exc_info=True)
 
-    def _process_lwt(self, device_id: str, raw: str):
+    def _process_legacy_presence(self, device_id: str, raw: str):
         """
-        Procesa el topic /conexion: indicador LWT online/offline.
+        Compatibilidad con firmware anterior que publicaba /conexion.
 
-        El firmware publica "online" al establecer sesion MQTT (retain=1).
-        El broker publica "offline" automaticamente si el nodo cae sin
-        desconectarse (Last Will and Testament configurado via AT+SMCONF).
+        No es la fuente de verdad: la expiracion por `ultima_conexion` corrige
+        cualquier estado obsoleto y el firmware actual ya no configura LWT.
 
         raw: "online" o "offline" (texto plano, sin JSON).
         """

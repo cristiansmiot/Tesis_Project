@@ -52,7 +52,7 @@ def obtener_resumen(db: Session = Depends(get_db)):
     Retorna conteo de dispositivos, alarmas activas y consumo total del día.
     """
     # Antes de contar, apagar el flag de los que dejaron de publicar:
-    # el LWT del broker puede perderse si el backend estaba caído.
+    # La presencia depende de last_seen, no de mensajes LWT.
     refrescar_estados_conexion(db)
 
     # Conteo de dispositivos

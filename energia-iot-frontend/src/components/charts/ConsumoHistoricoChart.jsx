@@ -11,6 +11,11 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { VOLTAJE_MIN, VOLTAJE_MAX } from '../../utils/voltage';
+import {
+  formatBogotaDate,
+  formatBogotaTime,
+  parseApiTimestamp,
+} from '../../utils/dateTime';
 
 const variables = [
   { key: 'potencia', label: 'Potencia', color: '#10b981', unidad: 'W' },
@@ -63,15 +68,21 @@ const ConsumoHistoricoChart = ({
   // En ventanas de más de 48h la hora sola es ambigua (se repite cada día):
   // se antepone día/mes. El umbral se infiere del propio rango de datos.
   const rangoMs = datos.length > 1
-    ? Math.abs(new Date(datos[0].timestamp) - new Date(datos[datos.length - 1].timestamp))
+    ? Math.abs(
+        (parseApiTimestamp(datos[0].timestamp)?.getTime() || 0) -
+        (parseApiTimestamp(datos[datos.length - 1].timestamp)?.getTime() || 0),
+      )
     : 0;
   const mostrarFecha = rangoMs > 48 * 3600 * 1000;
 
   const datosFormateados = datos
     .map((medicion) => {
-      const fecha = new Date(medicion.timestamp);
-      const hora = fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-      const dia = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit' });
+      const hora = formatBogotaTime(medicion.timestamp, '--:--');
+      const dia = formatBogotaDate(
+        medicion.timestamp,
+        { day: '2-digit', month: '2-digit' },
+        '--/--',
+      );
       return {
         hora: mostrarFecha ? `${dia} ${hora}` : hora,
         potencia: medicion.potencia_activa,

@@ -5,6 +5,7 @@ import StatusBadge from '../components/common/StatusBadge';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import { eventosAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { formatBogotaDateTime } from '../utils/dateTime';
 
 const severidadColor = {
   critical: 'red',
@@ -126,7 +127,7 @@ const Eventos = () => {
                       {e.umbral != null ? ` / ${e.umbral.toFixed(0)}` : ''}
                     </td>
                     <td className="py-3 px-4 text-gray-500 text-xs">
-                      {e.timestamp ? new Date(e.timestamp).toLocaleString('es-CO') : '—'}
+                      {e.timestamp ? formatBogotaDateTime(e.timestamp) : '—'}
                     </td>
                     <td className="py-3 px-4">
                       {e.activo ? (

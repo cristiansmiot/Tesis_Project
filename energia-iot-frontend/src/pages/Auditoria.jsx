@@ -14,6 +14,7 @@ import { useOutletContext, Navigate } from 'react-router-dom';
 import { FileText, ShieldOff } from 'lucide-react';
 import { auditoriaAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { formatBogotaDateTime } from '../utils/dateTime';
 
 const Auditoria = () => {
   const { refreshKey } = useOutletContext();
@@ -85,7 +86,7 @@ const Auditoria = () => {
                 {registros.map((r) => (
                   <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-4 text-gray-500 text-xs whitespace-nowrap">
-                      {r.timestamp ? new Date(r.timestamp).toLocaleString('es-CO') : '—'}
+                      {r.timestamp ? formatBogotaDateTime(r.timestamp) : '—'}
                     </td>
                     <td className="py-3 px-4 text-gray-700 text-xs">{r.usuario_email || 'Sistema'}</td>
                     <td className="py-3 px-4">

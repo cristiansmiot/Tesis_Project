@@ -6,6 +6,7 @@ import ConsumoAgregadoChart from '../components/charts/ConsumoAgregadoChart';
 import ActiveAlertsList from '../components/alerts/ActiveAlertsList';
 import { dashboardAPI, eventosAPI } from '../services/api';
 import { evaluarVoltaje } from '../utils/voltage';
+import { parseApiTimestamp } from '../utils/dateTime';
 
 const Resumen = () => {
   const { refreshKey } = useOutletContext();
@@ -104,7 +105,9 @@ const Resumen = () => {
 };
 
 function calcularTiempoRelativo(timestamp) {
-  const diff = Date.now() - new Date(timestamp).getTime();
+  const parsed = parseApiTimestamp(timestamp);
+  if (!parsed) return '';
+  const diff = Math.max(0, Date.now() - parsed.getTime());
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Ahora';
   if (mins < 60) return `Hace ${mins} min`;

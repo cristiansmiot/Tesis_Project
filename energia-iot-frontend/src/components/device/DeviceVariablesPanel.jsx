@@ -1,6 +1,7 @@
 import { Zap, Activity, Gauge, TrendingUp, Thermometer, Radio, Cpu, Battery, BatteryCharging } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import { evaluarVoltaje, evaluarFactorPotencia, evaluarFrecuencia } from '../../utils/voltage';
+import { formatBogotaDateTime } from '../../utils/dateTime';
 
 /**
  * Panel ampliado de variables del medidor.
@@ -184,7 +185,7 @@ const DeviceVariablesPanel = ({ medicion, saludData, reconciliacion }) => {
           <div className="border border-gray-100 rounded-lg p-3">
             <p className="text-xs text-gray-500">Timestamp</p>
             <p className="text-sm font-medium text-gray-800">
-              {medicion?.timestamp ? new Date(medicion.timestamp).toLocaleString('es-CO') : 'N/A'}
+              {medicion?.timestamp ? formatBogotaDateTime(medicion.timestamp) : 'N/A'}
             </p>
           </div>
           <div className="border border-gray-100 rounded-lg p-3">

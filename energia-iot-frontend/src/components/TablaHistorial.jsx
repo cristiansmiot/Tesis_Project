@@ -1,10 +1,11 @@
+import { formatBogotaDateTime } from '../utils/dateTime';
+
 /**
  * Componente que muestra una tabla con el historial de mediciones
  */
 const TablaHistorial = ({ mediciones, limite = 10 }) => {
   const formatearFecha = (timestamp) => {
-    const fecha = new Date(timestamp);
-    return fecha.toLocaleString('es-CO', {
+    return formatBogotaDateTime(timestamp, {
       day: '2-digit',
       month: '2-digit',
       hour: '2-digit',

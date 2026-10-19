@@ -1,3 +1,5 @@
+import { formatBogotaDateTime } from '../../utils/dateTime';
+
 /**
  * Panel lateral con información del dispositivo.
  * Nombre/ubicación/etiqueta son administrativos (editables); serial,
@@ -16,7 +18,7 @@ const DeviceInfoSidebar = ({ dispositivo, salud }) => {
     {
       label: 'Última conexión',
       valor: dispositivo?.ultima_conexion
-        ? new Date(dispositivo.ultima_conexion).toLocaleString('es-CO', {
+        ? formatBogotaDateTime(dispositivo.ultima_conexion, {
             day: '2-digit', month: '2-digit', year: 'numeric',
             hour: '2-digit', minute: '2-digit',
           })

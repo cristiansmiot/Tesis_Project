@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/common/ConfirmDialog';
 import { dispositivosAPI, medicionesAPI } from '../services/api';
 import { evaluarConectividad } from '../utils/voltage';
 import { useAuth } from '../contexts/AuthContext';
+import { formatBogotaTime } from '../utils/dateTime';
 
 const Medidores = () => {
   const { refreshKey } = useOutletContext();
@@ -216,7 +217,7 @@ const Medidores = () => {
                   const s = salud[d.device_id];
                   const rssiStatus = evaluarConectividad(s?.rssi_dbm);
                   const ultimaLectura = med?.timestamp
-                    ? new Date(med.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+                    ? formatBogotaTime(med.timestamp, '---')
                     : '---';
 
                   return (

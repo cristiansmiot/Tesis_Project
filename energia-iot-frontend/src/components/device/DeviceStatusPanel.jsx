@@ -1,5 +1,6 @@
 import { Wifi, WifiOff, AlertTriangle, Clock, Signal, RefreshCw, Activity } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
+import { formatBogotaTime } from '../../utils/dateTime';
 
 /**
  * Panel de estado actual y salud rapida del nodo.
@@ -10,10 +11,10 @@ import StatusBadge from '../common/StatusBadge';
 const DeviceStatusPanel = ({ dispositivo, medicion, eventosActivos = 0, saludData, metricasTransmision }) => {
   const estaOnline = dispositivo?.conectado ?? false;
   const ultimaLectura = medicion?.timestamp
-    ? new Date(medicion.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+    ? formatBogotaTime(medicion.timestamp)
     : 'N/A';
   const ultimaConexion = dispositivo?.ultima_conexion
-    ? new Date(dispositivo.ultima_conexion).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+    ? formatBogotaTime(dispositivo.ultima_conexion)
     : 'N/A';
 
   // Extraer metricas de salud
@@ -26,7 +27,7 @@ const DeviceStatusPanel = ({ dispositivo, medicion, eventosActivos = 0, saludDat
 
   // Ultimo heartbeat desde saludData
   const ultimoHeartbeat = saludData?.timestamp
-    ? new Date(saludData.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+    ? formatBogotaTime(saludData.timestamp)
     : ultimaConexion;
 
   return (

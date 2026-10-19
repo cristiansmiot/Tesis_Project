@@ -31,6 +31,10 @@ import TablaHistorial from '../components/TablaHistorial';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import { dispositivosAPI, medicionesAPI, saludAPI, comandosAPI, eventosAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { formatBogotaDateTime, formatBogotaTime } from '../utils/dateTime';
+
+const DATOS_REFRESH_MS = 30000;
+const HISTORIAL_REFRESH_MS = 60000;
 
 const MedidorDetalle = () => {
   const { deviceId } = useParams();
@@ -72,15 +76,23 @@ const MedidorDetalle = () => {
   const [confirmDialog, setConfirmDialog] = useState({ open: false, comando: '', label: '' });
 
   useEffect(() => {
-    cargarDatos();
+    cargarDatos(true);
+    const interval = setInterval(() => {
+      if (!document.hidden) cargarDatos(false);
+    }, DATOS_REFRESH_MS);
+    return () => clearInterval(interval);
   }, [deviceId, refreshKey]);
 
   useEffect(() => {
     cargarHistorial();
+    const interval = setInterval(() => {
+      if (!document.hidden) cargarHistorial();
+    }, HISTORIAL_REFRESH_MS);
+    return () => clearInterval(interval);
   }, [deviceId, refreshKey, periodoHoras]);
 
-  const cargarDatos = async () => {
-    setCargando(true);
+  const cargarDatos = async (mostrarCarga = false) => {
+    if (mostrarCarga) setCargando(true);
     try {
       const resultados = await Promise.allSettled([
         dispositivosAPI.obtener(deviceId),
@@ -104,7 +116,7 @@ const MedidorDetalle = () => {
     } catch (err) {
       console.error('Error cargando detalle:', err);
     } finally {
-      setCargando(false);
+      if (mostrarCarga) setCargando(false);
     }
   };
 
@@ -169,7 +181,7 @@ const MedidorDetalle = () => {
   };
 
   const ultimaConexion = dispositivo?.ultima_conexion
-    ? new Date(dispositivo.ultima_conexion).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+    ? formatBogotaTime(dispositivo.ultima_conexion)
     : 'N/A';
 
   // Ventanas disponibles para la serie histórica. El backend agrega por
@@ -380,7 +392,7 @@ const MedidorDetalle = () => {
                         showDot={false}
                       />
                       <span className="text-xs text-gray-400">
-                        {e.timestamp ? new Date(e.timestamp).toLocaleString('es-CO') : ''}
+                        {e.timestamp ? formatBogotaDateTime(e.timestamp, {}, '') : ''}
                       </span>
                     </div>
                     <p className="text-sm text-gray-700">{e.mensaje}</p>

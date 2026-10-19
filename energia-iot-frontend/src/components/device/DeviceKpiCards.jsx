@@ -1,5 +1,6 @@
 import { Zap, Activity, Gauge, TrendingUp, Clock, Battery } from 'lucide-react';
 import KpiCard from '../common/KpiCard';
+import { formatBogotaTime } from '../../utils/dateTime';
 
 /**
  * Fila de KPIs para el detalle de un medidor.
@@ -12,7 +13,7 @@ const DeviceKpiCards = ({ medicion }) => {
   const fp = medicion?.factor_potencia?.toFixed(2) || '---';
   const energia = medicion?.energia_activa?.toFixed(1) || '---';
   const ultimaLectura = medicion?.timestamp
-    ? new Date(medicion.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+    ? formatBogotaTime(medicion.timestamp, '---')
     : '---';
 
   return (

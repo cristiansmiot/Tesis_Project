@@ -46,18 +46,23 @@ class Settings(BaseSettings):
     # de red antes de declarar la caída.
     OFFLINE_UMBRAL_MIN: int = 5
 
-    # Calidad de tensión (CREG 024/2015)
-    # Nominal residencial monofásico acordado con el director: 110 V ±10%.
-    # Configurable por entorno porque algunas zonas del país operan a 120 V.
-    VOLTAJE_NOMINAL: float = 110.0
+    # Calidad de tensión residencial de nivel 1:
+    # - nominal 120 V fase-tierra (RETIE 2024),
+    # - banda estacionaria 90 %..110 % por más de un minuto
+    #   (CREG 070/1998, num. 6.2.1.1, mod. CREG 153/2019),
+    # - confirmada como 108 V..132 V por el Concepto CREG 6068/2025.
+    # Configurable por entorno para instalaciones con otro nominal declarado.
+    VOLTAJE_NOMINAL: float = 120.0
     VOLTAJE_TOLERANCIA_PCT: float = 10.0
+    # La condición debe mantenerse al menos un minuto antes de levantar alarma.
+    VOLTAJE_PERSISTENCIA_S: int = 60
 
     # Logs
     LOG_LEVEL: str = "INFO"
 
     @property
     def voltaje_min(self) -> float:
-        # round() evita residuos de punto flotante (110 * 1.1 = 121.00000000000001)
+        # round() evita residuos binarios de punto flotante.
         return round(self.VOLTAJE_NOMINAL * (1 - self.VOLTAJE_TOLERANCIA_PCT / 100), 2)
 
     @property

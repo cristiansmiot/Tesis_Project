@@ -427,22 +427,30 @@ class MQTTClient:
                     f"PF={power_factor:.2f}"
                 )
 
-                # Auto-generar alertas por voltaje según CREG 024/2015.
-                # Umbrales centralizados en config (110 V ±10% → 99–121 V por
-                # defecto, ajustables por variable de entorno según la zona).
+                # Calidad de tensión residencial: 120 V nominales y banda
+                # estacionaria de 90 % a 110 % (108-132 V). El numeral
+                # 6.2.1.1 de la Resolución CREG 070 de 1998, modificado por la
+                # Resolución CREG 153 de 2019, exige que la transgresión dure
+                # más de un minuto. Con muestreo por minuto confirmamos la
+                # condición con dos lecturas consecutivas separadas >= 60 s.
                 VOLTAJE_MIN = settings.voltaje_min
                 VOLTAJE_MAX = settings.voltaje_max
+                PERSISTENCIA_S = settings.VOLTAJE_PERSISTENCIA_S
 
                 from app.models.evento import Evento
                 event_time = datetime.now(timezone.utc)
                 tipo = None
                 if voltage > VOLTAJE_MAX:
                     tipo = "sobrevoltaje"
-                    mensaje = f"Sobrevoltaje detectado: {voltage:.1f}V (límite CREG: {VOLTAJE_MAX:.0f}V)"
+                    mensaje = (f"Sobrevoltaje sostenido: {voltage:.1f}V "
+                               f"(límite superior: {VOLTAJE_MAX:.0f}V; "
+                               f"persistencia >= {PERSISTENCIA_S}s)")
                     umbral = VOLTAJE_MAX
                 elif voltage > 0 and voltage < VOLTAJE_MIN:
                     tipo = "subtension"
-                    mensaje = f"Subtensión detectada: {voltage:.1f}V (límite CREG: {VOLTAJE_MIN:.0f}V)"
+                    mensaje = (f"Subtensión sostenida: {voltage:.1f}V "
+                               f"(límite inferior: {VOLTAJE_MIN:.0f}V; "
+                               f"persistencia >= {PERSISTENCIA_S}s)")
                     umbral = VOLTAJE_MIN
 
                 # Una condición continua es un solo incidente. Al normalizar
@@ -460,13 +468,44 @@ class MQTTClient:
                 actual = next((e for e in activos_voltaje if e.tipo == tipo), None)
                 if tipo is not None:
                     if actual is None:
-                        db.add(Evento(
-                            device_id=device_id, tipo=tipo, severidad="critical",
-                            valor=voltage, umbral=umbral, mensaje=mensaje,
-                            activo=True, transition="raised", occurrence_count=1,
-                            timestamp=event_time,
-                        ))
-                        logger.warning(f"Alerta CREG auto-generada: {device_id} | {mensaje}")
+                        anterior_medicion = (db.query(Medicion)
+                            .filter(Medicion.device_id == device_id,
+                                    Medicion.id != medicion.id)
+                            .order_by(Medicion.timestamp.desc()).first())
+                        tipo_anterior = None
+                        inicio_condicion = None
+                        if anterior_medicion is not None:
+                            voltaje_anterior = anterior_medicion.voltaje_rms
+                            if voltaje_anterior > VOLTAJE_MAX:
+                                tipo_anterior = "sobrevoltaje"
+                            elif 0 < voltaje_anterior < VOLTAJE_MIN:
+                                tipo_anterior = "subtension"
+                            inicio_condicion = anterior_medicion.timestamp
+
+                        transcurrido_s = 0.0
+                        if inicio_condicion is not None:
+                            inicio_cmp = inicio_condicion
+                            fin_cmp = ts_medicion
+                            if inicio_cmp.tzinfo is None:
+                                inicio_cmp = inicio_cmp.replace(tzinfo=timezone.utc)
+                            if fin_cmp.tzinfo is None:
+                                fin_cmp = fin_cmp.replace(tzinfo=timezone.utc)
+                            transcurrido_s = (fin_cmp - inicio_cmp).total_seconds()
+
+                        if tipo_anterior == tipo and transcurrido_s >= PERSISTENCIA_S:
+                            db.add(Evento(
+                                device_id=device_id, tipo=tipo, severidad="critical",
+                                valor=voltage, umbral=umbral, mensaje=mensaje,
+                                activo=True, transition="raised", occurrence_count=2,
+                                timestamp=inicio_condicion,
+                            ))
+                            logger.warning(
+                                "Alerta de tensión auto-generada: %s | %s | duración=%.1fs",
+                                device_id, mensaje, transcurrido_s)
+                        else:
+                            logger.info(
+                                "Condición de tensión pendiente: %s | tipo=%s | duración=%.1fs",
+                                device_id, tipo, transcurrido_s)
                     else:
                         actual.valor = voltage
                         actual.mensaje = mensaje

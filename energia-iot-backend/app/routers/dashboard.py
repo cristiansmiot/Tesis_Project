@@ -24,7 +24,7 @@ class ResumenGeneral(BaseModel):
     offline: int
     alarmas_activas: int
     consumo_total_kwh: float
-    # Indicador de tensión de la red según CREG 024/2015 (110 V ±10%):
+    # Indicador residencial: 120 V nominales, banda estacionaria 108-132 V.
     # promedio de la última medición de cada dispositivo y cuántos están
     # fuera del rango admisible. Si no hay mediciones, voltaje_promedio es None.
     voltaje_promedio: Optional[float] = None

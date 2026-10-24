@@ -16,17 +16,17 @@ la UI: `visualizador` no ve la tab Comandos ni la gestión de usuarios;
 - **Medidores** (`pages/Medidores.jsx`): listado con estado de conexión y señal.
 - **Detalle** (`pages/MedidorDetalle.jsx`): tabs Resumen / Variables /
   Histórico / Comandos / Eventos. La gráfica de voltaje dibuja las líneas de
-  referencia CREG 024/2015 (99 V y 121 V). Los comandos (reiniciar, corte,
+  referencia residencial CREG (108 V y 132 V). Los comandos (reiniciar, corte,
   restaurar, sincronizar hora) piden confirmación y quedan auditados en el
   backend.
 - **Eventos / Auditoría / Usuarios / Perfil**: gestión operativa.
 
 ## Umbrales de tensión
 
-`src/utils/voltage.js` centraliza la lógica CREG 024/2015: nominal 110 V
-±10 % (99–121 V). Si se cambia el nominal hay que cambiarlo también en el
-backend (`app/config.py`), que es quien genera los eventos persistidos —
-el frontend solo colorea.
+`src/utils/voltage.js` centraliza la banda residencial: nominal 120 V y
+90–110 % (108–132 V). El backend aplica además una persistencia mínima de
+60 segundos antes de crear la alarma; el frontend solo colorea el estado
+instantáneo.
 
 ## Ejecución local
 
@@ -56,7 +56,7 @@ src/
 ├── contexts/AuthContext.jsx      # Sesión JWT + permisos por rol
 ├── layouts/          # AppLayout (protegido) y AuthLayout (login)
 ├── services/api.js   # Cliente axios con interceptor de token
-└── utils/voltage.js  # Umbrales CREG 024/2015
+└── utils/voltage.js  # Banda de tensión residencial CREG
 ```
 
 ## Despliegue

@@ -10,9 +10,11 @@ El backend cumple dos roles que corren en el mismo proceso:
    mediciones y eventos, envío de comandos y auditoría de acciones.
 2. **Cliente MQTT (paho-mqtt en hilo propio)** suscrito a `medidor/#`:
    decodifica SenML RFC 8428 de los nodos, persiste mediciones y salud del
-   nodo, y genera eventos de calidad de tensión según CREG 024/2015
-   (nominal 110 V ±10 % → 99–121 V, configurable por entorno con
-   `VOLTAJE_NOMINAL` / `VOLTAJE_TOLERANCIA_PCT`).
+   nodo, y genera eventos de calidad de tensión estacionaria según el numeral
+   6.2.1.1 de la Resolución CREG 070 de 1998 (modificado por CREG 153 de 2019):
+   nominal 120 V, banda 108–132 V y persistencia mínima de 60 s. Es configurable
+   con `VOLTAJE_NOMINAL`, `VOLTAJE_TOLERANCIA_PCT` y
+   `VOLTAJE_PERSISTENCIA_S`.
 
 ## Topics MQTT que consume
 

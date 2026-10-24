@@ -184,7 +184,7 @@ const ConsumoHistoricoChart = ({
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend />
-            {/* Límites admisibles CREG 024/2015 (110 V ±10%) solo en la vista de voltaje */}
+            {/* Banda estacionaria CREG para nominal residencial de 120 V. */}
             {variable === 'voltaje' && (
               <>
                 <ReferenceLine

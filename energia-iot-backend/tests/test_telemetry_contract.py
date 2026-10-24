@@ -200,12 +200,14 @@ class TelemetryContractTests(unittest.TestCase):
 
     def test_voltage_alarm_is_one_incident_and_closes_when_normal(self):
         self.client._process_measurement(
-            "TEST-1", dict(self.data, seq=1, vrms=130.0), self.received)
+            "TEST-1", dict(self.data, seq=1, vrms=133.0), self.received)
         self.client._process_measurement(
-            "TEST-1", dict(self.data, seq=2, vrms=131.0),
+            "TEST-1", dict(self.data, seq=2, vrms=134.0,
+                           ts_device=(self.received + timedelta(minutes=1)).timestamp()),
             self.received + timedelta(minutes=1))
         self.client._process_measurement(
-            "TEST-1", dict(self.data, seq=3, vrms=110.0),
+            "TEST-1", dict(self.data, seq=3, vrms=120.0,
+                           ts_device=(self.received + timedelta(minutes=2)).timestamp()),
             self.received + timedelta(minutes=2))
         with self.sessions() as db:
             rows = db.query(Evento).filter(Evento.tipo == "sobrevoltaje").all()
@@ -213,6 +215,18 @@ class TelemetryContractTests(unittest.TestCase):
             self.assertFalse(rows[0].activo)
             self.assertIsNotNone(rows[0].fin_at)
             self.assertEqual(rows[0].occurrence_count, 2)
+
+    def test_transient_voltage_excursion_does_not_raise_alarm(self):
+        self.client._process_measurement(
+            "TEST-1", dict(self.data, seq=1, vrms=133.0), self.received)
+        self.client._process_measurement(
+            "TEST-1", dict(self.data, seq=2, vrms=120.0,
+                           ts_device=(self.received + timedelta(minutes=1)).timestamp()),
+            self.received + timedelta(minutes=1))
+        with self.sessions() as db:
+            rows = db.query(Evento).filter(
+                Evento.tipo.in_(["sobrevoltaje", "subtension"])).all()
+            self.assertEqual(rows, [])
 
     def test_firmware_clear_closes_original_event_with_end_time(self):
         raised = {

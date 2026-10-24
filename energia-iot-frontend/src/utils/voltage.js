@@ -1,22 +1,23 @@
 /**
- * Umbrales de voltaje según CREG 024 de 2015 (redes de distribución, Colombia).
- * Nominal residencial monofásico acordado con el director de tesis: 110 V.
- * Tolerancia ±10% → rango admisible 99 V – 121 V.
+ * Umbrales residenciales de nivel 1 en Colombia.
+ * Nominal: 120 V fase-tierra (RETIE 2024).
+ * CREG: tensión estacionaria 90 %..110 % por más de un minuto.
+ * Rango admisible: 108 V..132 V (Concepto CREG 6068 de 2025).
  * Estos límites deben coincidir con los del backend (services/mqtt_client.py),
  * que es quien genera los eventos persistidos; aquí solo se colorea la UI.
  */
 
-const VOLTAJE_NOMINAL = 110;
+const VOLTAJE_NOMINAL = 120;
 const TOLERANCIA_PCT = 10;
 
-// Redondeo a 2 decimales: 110 * 1.1 da 121.00000000000001 en punto flotante
-export const VOLTAJE_MIN = Math.round(VOLTAJE_NOMINAL * (100 - TOLERANCIA_PCT)) / 100; // 99V
-export const VOLTAJE_MAX = Math.round(VOLTAJE_NOMINAL * (100 + TOLERANCIA_PCT)) / 100; // 121V
+export const VOLTAJE_MIN = Math.round(VOLTAJE_NOMINAL * (100 - TOLERANCIA_PCT)) / 100; // 108 V
+export const VOLTAJE_MAX = Math.round(VOLTAJE_NOMINAL * (100 + TOLERANCIA_PCT)) / 100; // 132 V
 
 const SIN_AC = { estado: 'sin_ac', color: 'gray', label: 'Sin AC' };
 
 /**
- * Evalúa el estado de un voltaje según CREG 024/2015.
+ * Evalúa el estado instantáneo respecto a la banda CREG. La persistencia
+ * superior a un minuto se valida en el backend antes de crear una alarma.
  * @param {number} voltaje - Voltaje RMS medido
  * @param {boolean|null} acPresente - Presencia de línea AC (saludData.ac_ok)
  * @returns {{ estado: string, color: string, label: string }}

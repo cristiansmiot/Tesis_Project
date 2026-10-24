@@ -30,7 +30,10 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
-        <p className="text-sm text-gray-600 font-medium">{label}</p>
+        <p className="text-sm text-gray-600 font-medium">
+          {formatBogotaDate(new Date(label), { day: '2-digit', month: '2-digit', year: 'numeric' }, '--')}
+          {' '}{formatBogotaTime(new Date(label), '--:--')}
+        </p>
         {payload.map((entry, index) => {
           const variable = variables.find((v) => v.key === entry.dataKey);
           return (
@@ -62,36 +65,37 @@ const ConsumoHistoricoChart = ({
   periodos,
   periodoActual,
   onCambioPeriodo,
+  periodoInicio,
+  periodoFin,
 }) => {
   const [variable, setVariable] = useState(variableInicial);
 
   // En ventanas de más de 48h la hora sola es ambigua (se repite cada día):
   // se antepone día/mes. El umbral se infiere del propio rango de datos.
-  const rangoMs = datos.length > 1
-    ? Math.abs(
-        (parseApiTimestamp(datos[0].timestamp)?.getTime() || 0) -
-        (parseApiTimestamp(datos[datos.length - 1].timestamp)?.getTime() || 0),
-      )
+  const inicioMs = parseApiTimestamp(periodoInicio)?.getTime();
+  const finMs = parseApiTimestamp(periodoFin)?.getTime();
+  const rangoMs = Number.isFinite(inicioMs) && Number.isFinite(finMs)
+    ? Math.abs(finMs - inicioMs)
     : 0;
   const mostrarFecha = rangoMs > 48 * 3600 * 1000;
 
   const datosFormateados = datos
     .map((medicion) => {
-      const hora = formatBogotaTime(medicion.timestamp, '--:--');
-      const dia = formatBogotaDate(
-        medicion.timestamp,
-        { day: '2-digit', month: '2-digit' },
-        '--/--',
-      );
+      const timestampMs = parseApiTimestamp(medicion.timestamp)?.getTime();
       return {
-        hora: mostrarFecha ? `${dia} ${hora}` : hora,
+        timestampMs,
         potencia: medicion.potencia_activa,
         voltaje: medicion.voltaje_rms,
         corriente: medicion.corriente_rms,
         energia: medicion.energia_activa,
       };
     })
-    .reverse();
+    .filter((punto) => Number.isFinite(punto.timestampMs))
+    .sort((a, b) => a.timestampMs - b.timestampMs);
+
+  const dominioTiempo = Number.isFinite(inicioMs) && Number.isFinite(finMs)
+    ? [inicioMs, finMs]
+    : ['dataMin', 'dataMax'];
 
   const variableActual = variables.find((v) => v.key === variable) || variables[0];
 
@@ -148,7 +152,20 @@ const ConsumoHistoricoChart = ({
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis
-              dataKey="hora"
+              dataKey="timestampMs"
+              type="number"
+              scale="time"
+              domain={dominioTiempo}
+              tickFormatter={(value) => {
+                const hora = formatBogotaTime(new Date(value), '--:--');
+                if (!mostrarFecha) return hora;
+                const dia = formatBogotaDate(
+                  new Date(value),
+                  { day: '2-digit', month: '2-digit' },
+                  '--/--',
+                );
+                return `${dia} ${hora}`;
+              }}
               tick={{ fontSize: 12 }}
               stroke="#9ca3af"
               label={{ value: 'Hora', position: 'insideBottomRight', offset: -5, fontSize: 12, fill: '#6b7280' }}

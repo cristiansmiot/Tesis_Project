@@ -95,7 +95,7 @@ def obtener_resumen(device_id: str, db: Session = Depends(get_db)):
 def obtener_historico(
     device_id: str,
     horas: int = Query(24, ge=1, le=8760, description="Ventana hacia atrás (hasta 1 año)"),
-    limite: int = Query(500, ge=10, le=2000),
+    limite: int = Query(2000, ge=10, le=2000),
     db: Session = Depends(get_db),
 ):
     """
@@ -120,7 +120,7 @@ def obtener_historico(
         func.max(Medicion.potencia_activa).label('p_max')
     ).filter(*filtro).first()
 
-    if horas <= 48:
+    if horas <= 24:
         resolucion = "cruda"
         crudas = (
             db.query(Medicion).filter(*filtro)
@@ -130,8 +130,15 @@ def obtener_historico(
             raise HTTPException(status_code=404, detail=f"No hay mediciones para '{device_id}'")
         puntos = [MedicionPunto.model_validate(m) for m in crudas]
     else:
-        resolucion = "hora" if horas <= 744 else "dia"
-        bucket_s = 3600 if resolucion == "hora" else 86400
+        if horas <= 48:
+            resolucion = "5min"
+            bucket_s = 300
+        elif horas <= 744:
+            resolucion = "hora"
+            bucket_s = 3600
+        else:
+            resolucion = "dia"
+            bucket_s = 86400
         filas = (
             db.query(
                 Medicion.timestamp, Medicion.voltaje_rms, Medicion.corriente_rms,

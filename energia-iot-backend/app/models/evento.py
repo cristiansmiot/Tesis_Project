@@ -26,7 +26,8 @@ class Evento(Base):
     fw_version = Column(String(20), nullable=True)
     time_valid = Column(Boolean, nullable=True)
     ts_device = Column(DateTime(timezone=True), nullable=True)
-    activo = Column(Boolean, default=True)  # True = no reconocida, False = reconocida
+    activo = Column(Boolean, default=True)  # True = condicion presente, False = solucionada
+    fin_at = Column(DateTime(timezone=True), nullable=True)
     reconocido_por = Column(String(255), nullable=True)  # email del usuario que reconoció
     reconocido_at = Column(DateTime(timezone=True), nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)

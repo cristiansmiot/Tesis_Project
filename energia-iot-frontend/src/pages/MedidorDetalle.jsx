@@ -54,6 +54,7 @@ const MedidorDetalle = () => {
   const [medicion, setMedicion] = useState(null);
   const [historial, setHistorial] = useState([]);
   const [estadisticas, setEstadisticas] = useState(null);
+  const [periodoRango, setPeriodoRango] = useState({ inicio: null, fin: null });
   const [saludData, setSaludData] = useState(null);
   const [metricasTransmision, setMetricasTransmision] = useState(null);
   const [reconciliacion, setReconciliacion] = useState(null);
@@ -125,9 +126,11 @@ const MedidorDetalle = () => {
       const res = await medicionesAPI.historico(deviceId, periodoHoras);
       setHistorial(res.mediciones || []);
       setEstadisticas(res.estadisticas);
+      setPeriodoRango({ inicio: res.periodo_inicio, fin: res.periodo_fin });
     } catch {
       setHistorial([]);
       setEstadisticas(null);
+      setPeriodoRango({ inicio: null, fin: null });
     }
   };
 
@@ -265,6 +268,8 @@ const MedidorDetalle = () => {
                 periodos={periodosDisponibles}
                 periodoActual={periodoHoras}
                 onCambioPeriodo={setPeriodoHoras}
+                periodoInicio={periodoRango.inicio}
+                periodoFin={periodoRango.fin}
               />
             </div>
             <div className="space-y-6">
@@ -311,6 +316,8 @@ const MedidorDetalle = () => {
             periodos={periodosDisponibles}
             periodoActual={periodoHoras}
             onCambioPeriodo={setPeriodoHoras}
+            periodoInicio={periodoRango.inicio}
+            periodoFin={periodoRango.fin}
           />
           <TablaHistorial mediciones={historial} limite={20} />
         </div>

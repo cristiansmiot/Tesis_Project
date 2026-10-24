@@ -433,30 +433,45 @@ class MQTTClient:
                 VOLTAJE_MIN = settings.voltaje_min
                 VOLTAJE_MAX = settings.voltaje_max
 
-                if voltage > 0 and (voltage > VOLTAJE_MAX or voltage < VOLTAJE_MIN):
-                    from app.models.evento import Evento
+                from app.models.evento import Evento
+                event_time = datetime.now(timezone.utc)
+                tipo = None
+                if voltage > VOLTAJE_MAX:
+                    tipo = "sobrevoltaje"
+                    mensaje = f"Sobrevoltaje detectado: {voltage:.1f}V (límite CREG: {VOLTAJE_MAX:.0f}V)"
+                    umbral = VOLTAJE_MAX
+                elif voltage > 0 and voltage < VOLTAJE_MIN:
+                    tipo = "subtension"
+                    mensaje = f"Subtensión detectada: {voltage:.1f}V (límite CREG: {VOLTAJE_MIN:.0f}V)"
+                    umbral = VOLTAJE_MIN
 
-                    if voltage > VOLTAJE_MAX:
-                        tipo = "sobrevoltaje"
-                        mensaje = f"Sobrevoltaje detectado: {voltage:.1f}V (límite CREG: {VOLTAJE_MAX:.0f}V)"
-                        umbral = VOLTAJE_MAX
+                # Una condición continua es un solo incidente. Al normalizar
+                # (o perder AC, que tiene su evento propio) se registra el fin.
+                activos_voltaje = (db.query(Evento)
+                    .filter(Evento.device_id == device_id,
+                            Evento.tipo.in_(["sobrevoltaje", "subtension"]),
+                            Evento.activo.is_(True)).all())
+                for anterior in activos_voltaje:
+                    if tipo is None or anterior.tipo != tipo:
+                        anterior.activo = False
+                        anterior.fin_at = event_time
+                        anterior.transition = "cleared"
+
+                actual = next((e for e in activos_voltaje if e.tipo == tipo), None)
+                if tipo is not None:
+                    if actual is None:
+                        db.add(Evento(
+                            device_id=device_id, tipo=tipo, severidad="critical",
+                            valor=voltage, umbral=umbral, mensaje=mensaje,
+                            activo=True, transition="raised", occurrence_count=1,
+                            timestamp=event_time,
+                        ))
+                        logger.warning(f"Alerta CREG auto-generada: {device_id} | {mensaje}")
                     else:
-                        tipo = "subtension"
-                        mensaje = f"Subtensión detectada: {voltage:.1f}V (límite CREG: {VOLTAJE_MIN:.0f}V)"
-                        umbral = VOLTAJE_MIN
-
-                    evento = Evento(
-                        device_id=device_id,
-                        tipo=tipo,
-                        severidad="critical",
-                        valor=voltage,
-                        umbral=umbral,
-                        mensaje=mensaje,
-                        activo=True,
-                    )
-                    db.add(evento)
-                    db.commit()
-                    logger.warning(f"Alerta CREG auto-generada: {device_id} | {mensaje}")
+                        actual.valor = voltage
+                        actual.mensaje = mensaje
+                        actual.occurrence_count = (actual.occurrence_count or 1) + 1
+                db.commit()
 
             finally:
                 db.close()
@@ -585,11 +600,11 @@ class MQTTClient:
                 red_exitos    = _int_any("red_ok", "red_exitos", "reconexiones")
                 mqtt_intentos = _int_any("mqtt_int", "mqtt_intentos")
                 mqtt_exitos   = _int_any("mqtt_sessions_ok", "mqtt_ok_cnt", "mqtt_exitos")
-                msg_tx = _int_any("data_publish_ok", "msg_tx")
-                reconexiones = _int_any("reconnect_count", "reconexiones")
+                msg_tx = _int_any("dpo", "data_publish_ok", "msg_tx")
+                reconexiones = _int_any("rec", "reconnect_count", "reconexiones")
                 clock = trace_metadata({k: data[k] for k in
                     ("ts_device", "time_valid") if k in data})
-                radio_valid = _bool_any("radio_valid")
+                radio_valid = _bool_any("rv", "radio_valid")
 
                 rssi_dbm = _float_any("rssi_dbm", "rssi")
                 imei     = _str_any("imei")
@@ -605,6 +620,13 @@ class MQTTClient:
                     modem_ok=modem_ok,
                     mqtt_ok=mqtt_ok_val,
                     cal_ok=cal_ok,
+                    cereg_stat=_int_any("creg", "cereg_stat"),
+                    cnact_state=_int_any("pdp", "cnact_state"),
+                    smstate=_int_any("ms", "smstate"),
+                    last_publish_error=_int_any("pe", "last_publish_error"),
+                    last_recovery_error=_int_any("re", "last_recovery_error"),
+                    last_recovery_ms=_int_any("rm", "last_recovery_ms"),
+                    recovery_stage=_str_any("rs", "recovery_stage"),
                     rssi_dbm=rssi_dbm,
                     msg_tx=msg_tx,
                     reconexiones=reconexiones,
@@ -612,18 +634,18 @@ class MQTTClient:
                     uptime_ms=_int_any("uptime_ms"),
                     ts_device=clock["ts_device"],
                     time_valid=clock["time_valid"],
-                    data_generated_count=_int_any("data_generated_count"),
-                    data_publish_attempts=_int_any("data_publish_attempts"),
-                    data_publish_ok=_int_any("data_publish_ok"),
-                    ac_loss_count=_int_any("ac_loss_count"),
-                    ac_restore_count=_int_any("ac_restore_count"),
-                    reset_reason=_int_any("reset_reason"),
-                    reset_reason_name=_str_any("reset_reason_name"),
+                    data_generated_count=_int_any("dg", "data_generated_count"),
+                    data_publish_attempts=_int_any("dpa", "data_publish_attempts"),
+                    data_publish_ok=_int_any("dpo", "data_publish_ok"),
+                    ac_loss_count=_int_any("acl", "ac_loss_count"),
+                    ac_restore_count=_int_any("acr", "ac_restore_count"),
+                    reset_reason=_int_any("rr", "reset_reason"),
+                    reset_reason_name=_str_any("rrn", "reset_reason_name"),
                     radio_valid=radio_valid,
-                    rsrp_dbm=_float_any("rsrp_dbm") if radio_valid else None,
-                    rsrq_db=_float_any("rsrq_db") if radio_valid else None,
-                    rssnr_raw=_float_any("rssnr_raw") if radio_valid else None,
-                    sinr_db=_float_any("sinr_db") if radio_valid else None,
+                    rsrp_dbm=_float_any("rsrp", "rsrp_dbm") if radio_valid else None,
+                    rsrq_db=_float_any("rsrq", "rsrq_db") if radio_valid else None,
+                    rssnr_raw=_float_any("snrr", "rssnr_raw") if radio_valid else None,
+                    sinr_db=_float_any("sinr", "sinr_db") if radio_valid else None,
                     ade_perdidas=ade_perdidas,
                     red_intentos=red_intentos,
                     red_exitos=red_exitos,
@@ -784,24 +806,64 @@ class MQTTClient:
 
             db = self._db_session_factory()
             try:
+                event_time = event_clock.get("ts_device") or datetime.now(timezone.utc)
+
+                # Separar el ciclo de vida de la alarma de su reconocimiento.
+                # CLEARED cierra el incidente original y conserva inicio/fin
+                # en una sola fila. Los eventos de recuperación también
+                # limpian fallos antiguos del módulo tras un reinicio.
+                resolve_query = None
+                if transition == "cleared":
+                    resolve_query = db.query(Evento).filter(
+                        Evento.device_id == device_id,
+                        Evento.tipo == tipo,
+                        Evento.activo.is_(True),
+                    )
+                    if module:
+                        resolve_query = resolve_query.filter(Evento.module == module)
+                    if code:
+                        resolve_query = resolve_query.filter(Evento.code == code)
+                elif tipo == "ac_restored":
+                    resolve_query = db.query(Evento).filter(
+                        Evento.device_id == device_id,
+                        Evento.tipo == "ac_lost",
+                        Evento.activo.is_(True),
+                    )
+                elif tipo == "module_ready" and module:
+                    resolve_query = db.query(Evento).filter(
+                        Evento.device_id == device_id,
+                        Evento.module == module,
+                        Evento.activo.is_(True),
+                    )
+                elif tipo == "time_synced":
+                    resolve_query = db.query(Evento).filter(
+                        Evento.device_id == device_id,
+                        Evento.tipo.in_(["time_invalid", "time_sync_failed", "rtc_backup_lost"]),
+                        Evento.activo.is_(True),
+                    )
+
+                resolved = 0
+                if resolve_query is not None:
+                    resolved = resolve_query.update({
+                        Evento.activo: False,
+                        Evento.fin_at: event_time,
+                    }, synchronize_session=False)
+                    db.flush()
+
                 if event_id:
                     existing = (db.query(Evento)
                         .filter(Evento.device_id == device_id,
                                 Evento.event_id == event_id).first())
                     if existing is not None:
+                        db.commit()
                         logger.info("Evento duplicado ignorado: %s %s", device_id, event_id)
                         return
 
-                # Una transicion CLEARED resuelve su alarma previa. AC_RESTORED
-                # resuelve especificamente AC_LOST sin borrar la evidencia.
-                resolve_tipo = ("ac_lost" if tipo == "ac_restored"
-                                else tipo if transition == "cleared" else None)
-                if resolve_tipo:
-                    (db.query(Evento)
-                       .filter(Evento.device_id == device_id,
-                               Evento.tipo == resolve_tipo,
-                               Evento.activo.is_(True))
-                       .update({Evento.activo: False}, synchronize_session=False))
+                if transition == "cleared" and resolved > 0:
+                    db.commit()
+                    logger.info("Alarma solucionada: %s | %s | fin=%s",
+                                device_id, tipo, event_time.isoformat())
+                    return
 
                 evento = Evento(
                     device_id=device_id,
@@ -823,6 +885,8 @@ class MQTTClient:
                     fw_version=str(data.get("fw"))[:20] if data.get("fw") else None,
                     time_valid=event_clock.get("time_valid"),
                     ts_device=event_clock.get("ts_device"),
+                    fin_at=event_time if not activo else None,
+                    timestamp=event_time,
                 )
                 db.add(evento)
                 db.commit()

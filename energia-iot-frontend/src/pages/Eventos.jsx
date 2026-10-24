@@ -31,7 +31,7 @@ const Eventos = () => {
     try {
       const params = { limit: 50 };
       if (filtroActivo === 'activos') params.activo = true;
-      if (filtroActivo === 'reconocidos') params.activo = false;
+      if (filtroActivo === 'solucionados') params.activo = false;
 
       const res = await eventosAPI.listar(params);
       setEventos(res.eventos || []);
@@ -74,7 +74,7 @@ const Eventos = () => {
 
       {/* Filtros */}
       <div className="flex gap-2 mb-4">
-        {['todos', 'activos', 'reconocidos'].map((f) => (
+        {['todos', 'activos', 'solucionados'].map((f) => (
           <button
             key={f}
             onClick={() => setFiltroActivo(f)}
@@ -108,7 +108,8 @@ const Eventos = () => {
                   <th className="text-left py-3 px-4 font-semibold text-gray-600">Severidad</th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-600">Mensaje</th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-600">Valor</th>
-                  <th className="text-left py-3 px-4 font-semibold text-gray-600">Fecha</th>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-600">Inicio</th>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-600">Fin</th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-600">Estado</th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-600">Acciones</th>
                 </tr>
@@ -129,16 +130,19 @@ const Eventos = () => {
                     <td className="py-3 px-4 text-gray-500 text-xs">
                       {e.timestamp ? formatBogotaDateTime(e.timestamp) : '—'}
                     </td>
+                    <td className="py-3 px-4 text-gray-500 text-xs">
+                      {e.fin_at ? formatBogotaDateTime(e.fin_at) : '—'}
+                    </td>
                     <td className="py-3 px-4">
                       {e.activo ? (
                         <StatusBadge label="Activa" color="red" />
                       ) : (
-                        <StatusBadge label="Reconocida" color="green" />
+                        <StatusBadge label="Solucionada" color="green" />
                       )}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
-                        {e.activo && (
+                        {!e.reconocido_at && (
                           <button
                             onClick={() => reconocer(e.id)}
                             className="flex items-center gap-1 text-blue-600 hover:underline text-xs font-medium"
@@ -147,7 +151,7 @@ const Eventos = () => {
                             Reconocer
                           </button>
                         )}
-                        {!e.activo && e.reconocido_por && (
+                        {e.reconocido_por && (
                           <span className="text-xs text-gray-400">{e.reconocido_por}</span>
                         )}
                         {esSuperAdmin && (

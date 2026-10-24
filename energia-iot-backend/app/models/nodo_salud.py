@@ -23,6 +23,13 @@ class NodoSalud(Base):
     modem_ok  = Column(Boolean, nullable=True)   # SIM7080G responde AT
     mqtt_ok   = Column(Boolean, nullable=True)   # Sesión MQTT activa en el nodo
     cal_ok    = Column(Boolean, nullable=True)   # Calibración mSure válida y cargada
+    cereg_stat = Column(Integer, nullable=True)
+    cnact_state = Column(Integer, nullable=True)
+    smstate = Column(Integer, nullable=True)
+    last_publish_error = Column(Integer, nullable=True)
+    last_recovery_error = Column(Integer, nullable=True)
+    last_recovery_ms = Column(Integer, nullable=True)
+    recovery_stage = Column(String(24), nullable=True)
 
     # ── Métricas de transmisión ───────────────────────────────────────────
     rssi_dbm      = Column(Float,   nullable=True)  # Señal celular (dBm), -127 = N/A

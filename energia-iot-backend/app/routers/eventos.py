@@ -41,6 +41,7 @@ class EventoResponse(BaseModel):
     fw_version: Optional[str] = None
     time_valid: Optional[bool] = None
     ts_device: Optional[datetime] = None
+    fin_at: Optional[datetime] = None
     reconocido_por: Optional[str]
     reconocido_at: Optional[datetime]
     timestamp: Optional[datetime]
@@ -61,7 +62,7 @@ def listar_eventos(
     device_id: Optional[str] = Query(None, description="Filtrar por dispositivo"),
     tipo: Optional[str] = Query(None, description="Filtrar por tipo (sobrevoltaje, subtension, desconexion...)"),
     severidad: Optional[str] = Query(None, description="Filtrar por severidad (info, warning, critical)"),
-    activo: Optional[bool] = Query(None, description="Filtrar por estado (true=no reconocida)"),
+    activo: Optional[bool] = Query(None, description="Filtrar por estado (true=activa, false=solucionada)"),
     desde: Optional[datetime] = Query(None, description="Inicio UTC inclusivo"),
     hasta: Optional[datetime] = Query(None, description="Fin UTC inclusivo"),
     skip: int = Query(0, ge=0),
@@ -102,7 +103,7 @@ def listar_alertas_activas(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    """Listar alertas activas (no reconocidas)."""
+    """Listar solo condiciones que siguen activas en el sistema."""
     query = db.query(Evento).filter(Evento.activo == True)
     total = query.count()
     eventos = query.order_by(desc(Evento.timestamp)).limit(limit).all()
@@ -120,16 +121,15 @@ def reconocer_evento(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(require_operador_or_admin),
 ):
-    """Reconocer (resolver) una alerta. Solo operador y super_admin."""
+    """Reconocer una alerta sin alterar si la condicion sigue activa."""
     evento = db.query(Evento).filter(Evento.id == evento_id).first()
     if not evento:
         raise HTTPException(status_code=404, detail="Evento no encontrado")
-    if not evento.activo:
+    if evento.reconocido_at is not None:
         raise HTTPException(status_code=400, detail="El evento ya fue reconocido")
 
-    evento.activo = False
     evento.reconocido_por = usuario.email
-    evento.reconocido_at = datetime.utcnow()
+    evento.reconocido_at = datetime.now(timezone.utc)
     db.commit()
 
     registrar_accion(

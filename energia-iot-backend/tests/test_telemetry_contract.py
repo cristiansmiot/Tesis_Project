@@ -198,6 +198,53 @@ class TelemetryContractTests(unittest.TestCase):
             self.assertEqual(conn.execute(text("SELECT device_id FROM mediciones WHERE id=1")).scalar(), "PRESERVED")
         engine.dispose()
 
+    def test_voltage_alarm_is_one_incident_and_closes_when_normal(self):
+        self.client._process_measurement(
+            "TEST-1", dict(self.data, seq=1, vrms=130.0), self.received)
+        self.client._process_measurement(
+            "TEST-1", dict(self.data, seq=2, vrms=131.0),
+            self.received + timedelta(minutes=1))
+        self.client._process_measurement(
+            "TEST-1", dict(self.data, seq=3, vrms=110.0),
+            self.received + timedelta(minutes=2))
+        with self.sessions() as db:
+            rows = db.query(Evento).filter(Evento.tipo == "sobrevoltaje").all()
+            self.assertEqual(len(rows), 1)
+            self.assertFalse(rows[0].activo)
+            self.assertIsNotNone(rows[0].fin_at)
+            self.assertEqual(rows[0].occurrence_count, 2)
+
+    def test_firmware_clear_closes_original_event_with_end_time(self):
+        raised = {
+            "event_id": "boot1-evt1", "code": "mqtt_disconnected",
+            "module": "mqtt", "transition": "raised", "severity": "warning",
+        }
+        cleared = dict(raised, event_id="boot1-evt2", transition="cleared")
+        self.client._process_alert("TEST-1", raised)
+        self.client._process_alert("TEST-1", cleared)
+        with self.sessions() as db:
+            rows = db.query(Evento).filter(Evento.tipo == "mqtt_disconnected").all()
+            self.assertEqual(len(rows), 1)
+            self.assertFalse(rows[0].activo)
+            self.assertIsNotNone(rows[0].fin_at)
+
+    def test_status_persists_failure_diagnostics(self):
+        self.client._process_measurement("TEST-1", self.data, self.received)
+        self.client._process_status("TEST-1", {
+            "online": True, "creg": 1, "pdp": 1,
+            "ms": 0, "pe": 263, "re": 0, "rm": 4321,
+            "rs": "complete",
+        })
+        with self.sessions() as db:
+            row = db.query(NodoSalud).one()
+            self.assertEqual(row.cereg_stat, 1)
+            self.assertEqual(row.cnact_state, 1)
+            self.assertEqual(row.smstate, 0)
+            self.assertEqual(row.last_publish_error, 263)
+            self.assertEqual(row.last_recovery_ms, 4321)
+            self.assertEqual(row.recovery_stage, "complete")
+
+
 
 if __name__ == "__main__":
     unittest.main()

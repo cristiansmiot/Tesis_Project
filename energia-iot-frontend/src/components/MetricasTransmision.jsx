@@ -26,8 +26,8 @@ const BarraProgreso = ({ valor, max = 100, color = 'blue' }) => {
  */
 const calificarPDR = (pdr) => {
   if (pdr === null || pdr === undefined) return { color: 'gray', texto: 'N/A', icono: null };
-  if (pdr >= 95) return { color: 'green', texto: 'Excelente', icono: CheckCircle };
-  if (pdr >= 80) return { color: 'yellow', texto: 'Aceptable', icono: AlertTriangle };
+  if (pdr >= 99) return { color: 'green', texto: '≥99%', icono: CheckCircle };
+  if (pdr >= 95) return { color: 'yellow', texto: '<99%', icono: AlertTriangle };
   return { color: 'red', texto: 'Deficiente', icono: AlertTriangle };
 };
 
@@ -81,12 +81,12 @@ const MetricasTransmision = ({ metricas }) => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-indigo-500" />
-            <span className="text-sm font-semibold text-gray-700">PDR</span>
+            <span className="text-sm font-semibold text-gray-700">PDR observado</span>
           </div>
           <div className="flex items-center gap-2">
             {pdrCalif.icono && <pdrCalif.icono className={`w-4 h-4 text-${pdrCalif.color}-500`} />}
             <span className={`text-sm font-bold text-${pdrCalif.color}-600`}>
-              {pdr?.porcentaje !== null ? `${pdr.porcentaje}%` : 'N/A'}
+              {pdr?.porcentaje != null ? `${pdr.porcentaje}%` : 'N/A'}
             </span>
           </div>
         </div>
@@ -95,6 +95,9 @@ const MetricasTransmision = ({ metricas }) => {
           <span>{pdr?.mediciones_recibidas ?? 0} recibidas</span>
           <span>{pdr?.mediciones_esperadas ?? 0} esperadas</span>
         </div>
+        <p className="text-xs text-gray-500">
+          {pdr?.alcance || 'Pendiente de datos con identidad. El PDR completo se verifica contra la SD.'}
+        </p>
       </div>
 
       {/* ── RSSI ────────────────────────────────────────────────────── */}
@@ -128,14 +131,28 @@ const MetricasTransmision = ({ metricas }) => {
         )}
       </div>
 
+      <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+        <p className="text-sm font-semibold text-gray-700">Radio LTE · último estado</p>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          {[['RSRP', 'rsrp_dbm', 'dBm'], ['RSRQ', 'rsrq_db', 'dB'], ['SINR', 'sinr_db', 'dB']].map(([label, key, unit]) => (
+            <div key={key}>
+              <p className="text-lg font-bold text-gray-800">{ultimo_estado?.radio_valid ? (ultimo_estado[key] ?? '—') : '—'}</p>
+              <p className="text-xs text-gray-400">{label} ({unit})</p>
+            </div>
+          ))}
+        </div>
+        {!ultimo_estado?.radio_valid && <p className="text-xs text-gray-500">Sin medición LTE válida en el último estado.</p>}
+      </div>
+
       {/* ── Contadores ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-gray-50 rounded-lg p-3 space-y-1">
           <div className="flex items-center gap-2">
             <Radio className="w-4 h-4 text-blue-500" />
-            <span className="text-xs font-semibold text-gray-500">Mensajes TX</span>
+            <span className="text-xs font-semibold text-gray-500">Aceptados por módem</span>
           </div>
           <p className="text-xl font-bold text-gray-800">{msg_tx?.total_actual ?? '—'}</p>
+          <p className="text-xs text-gray-400">Incluye reenvíos; recepción se verifica en BD.</p>
           {msg_tx?.delta_ventana !== null && msg_tx?.delta_ventana !== undefined && (
             <p className="text-xs text-green-600">+{msg_tx.delta_ventana} en {ventana_horas}h</p>
           )}
@@ -153,6 +170,11 @@ const MetricasTransmision = ({ metricas }) => {
             </p>
           )}
         </div>
+      </div>
+
+      <div className="flex justify-between text-xs text-gray-500">
+        <span>Generados: {ultimo_estado?.data_generated_count ?? '—'}</span>
+        <span>Intentos de publicación: {ultimo_estado?.data_publish_attempts ?? '—'}</span>
       </div>
 
       {/* ── Confiabilidad de conexión ──────────────────────────────── */}

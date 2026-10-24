@@ -132,7 +132,56 @@ def init_db() -> None:
     from app.models import dispositivo, medicion, nodo_salud, usuario, evento, audit_log  # noqa: F401
     Base.metadata.create_all(bind=get_engine())
     _aplicar_migraciones_incrementales()
+    _reconciliar_eventos_historicos()
     logger.info("Base de datos inicializada correctamente")
+
+
+def _reconciliar_eventos_historicos() -> None:
+    """Cierra alarmas antiguas que ya tienen evidencia posterior de recuperación.
+
+    Versiones anteriores confundían ``activo`` con ``no reconocido`` y además
+    guardaban CLEARED como una fila separada. Esta migración lógica es
+    idempotente y conserva todas las filas como evidencia histórica.
+    """
+    from app.models.evento import Evento
+
+    db = get_session_local()()
+    try:
+        recuperaciones = (db.query(Evento)
+            .filter((Evento.transition == "cleared") |
+                    (Evento.tipo.in_(["module_ready", "time_synced", "ac_restored"])))
+            .order_by(Evento.timestamp.asc(), Evento.id.asc()).all())
+        for rec in recuperaciones:
+            fin = rec.ts_device or rec.timestamp or rec.created_at
+            q = db.query(Evento).filter(
+                Evento.device_id == rec.device_id,
+                Evento.activo.is_(True),
+                Evento.timestamp <= rec.timestamp,
+            )
+            if rec.transition == "cleared":
+                q = q.filter(Evento.tipo == rec.tipo)
+                if rec.module:
+                    q = q.filter(Evento.module == rec.module)
+                if rec.code:
+                    q = q.filter(Evento.code == rec.code)
+            elif rec.tipo == "module_ready" and rec.module:
+                q = q.filter(Evento.module == rec.module)
+            elif rec.tipo == "time_synced":
+                q = q.filter(Evento.tipo.in_([
+                    "time_invalid", "time_sync_failed", "rtc_backup_lost",
+                ]))
+            elif rec.tipo == "ac_restored":
+                q = q.filter(Evento.tipo == "ac_lost")
+            else:
+                continue
+            q.update({Evento.activo: False, Evento.fin_at: fin},
+                     synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("No se pudieron reconciliar los eventos históricos")
+    finally:
+        db.close()
 
 
 def _aplicar_migraciones_incrementales(engine=None) -> None:
@@ -164,6 +213,10 @@ def _aplicar_migraciones_incrementales(engine=None) -> None:
             "data_publish_attempts": "BIGINT", "data_publish_ok": "BIGINT",
             "ac_loss_count": "INTEGER", "ac_restore_count": "INTEGER",
             "reset_reason": "INTEGER", "reset_reason_name": "VARCHAR(32)",
+            "cereg_stat": "INTEGER", "cnact_state": "INTEGER",
+            "smstate": "INTEGER", "last_publish_error": "INTEGER",
+            "last_recovery_error": "INTEGER", "last_recovery_ms": "INTEGER",
+            "recovery_stage": "VARCHAR(24)",
         },
         "eventos": {
             "event_id": "VARCHAR(24)", "module": "VARCHAR(24)",
@@ -172,6 +225,7 @@ def _aplicar_migraciones_incrementales(engine=None) -> None:
             "occurrence_count": "INTEGER", "error": "INTEGER",
             "fw_version": "VARCHAR(20)", "time_valid": "BOOLEAN",
             "ts_device": "TIMESTAMP WITH TIME ZONE",
+            "fin_at": "TIMESTAMP WITH TIME ZONE",
         },
     }
     with target.begin() as conn:

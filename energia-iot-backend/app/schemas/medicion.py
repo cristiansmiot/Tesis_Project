@@ -47,6 +47,17 @@ class MedicionResponse(BaseModel):
     energia_reactiva: Optional[float] = 0.0
     timestamp: datetime
     created_at: datetime
+    boot_id: Optional[int] = None
+    seq: Optional[int] = None
+    fw_version: Optional[str] = None
+    uptime_ms: Optional[int] = None
+    time_valid: Optional[bool] = None
+    ts_device: Optional[datetime] = None
+    ts_server: Optional[datetime] = None
+    last_received_at: Optional[datetime] = None
+    calibration_status: Optional[int] = None
+    duplicate_count: int = 0
+    identity_conflict_count: int = 0
 
     class Config:
         from_attributes = True

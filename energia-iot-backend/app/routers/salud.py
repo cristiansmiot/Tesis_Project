@@ -8,8 +8,43 @@ from typing import Optional
 from app.database import get_db
 from app.models.nodo_salud import NodoSalud
 from app.models.medicion import Medicion
+from app.models.evento import Evento
+from app.services.telemetry_contract import sequence_metrics
 
 router = APIRouter(prefix="/salud", tags=["Salud del Nodo"])
+
+
+def _numeric_stats(values):
+    values = sorted(float(v) for v in values if v is not None)
+    if not values:
+        return None
+
+    def percentile(p):
+        if len(values) == 1:
+            return values[0]
+        pos = (len(values) - 1) * p
+        lo, hi = int(pos), min(int(pos) + 1, len(values) - 1)
+        return values[lo] + (values[hi] - values[lo]) * (pos - lo)
+
+    return {
+        "min": round(values[0], 3),
+        "promedio": round(sum(values) / len(values), 3),
+        "p50": round(percentile(0.50), 3),
+        "p95": round(percentile(0.95), 3),
+        "p99": round(percentile(0.99), 3),
+        "max": round(values[-1], 3),
+        "muestras": len(values),
+    }
+
+
+def _sum_boot_max(rows, field):
+    maxima = {}
+    for row in rows:
+        boot_id, value = row.boot_id, getattr(row, field, None)
+        if boot_id is None or value is None:
+            continue
+        maxima[boot_id] = max(maxima.get(boot_id, 0), int(value))
+    return sum(maxima.values()) if maxima else None
 
 
 @router.get("/{device_id}/metricas")
@@ -23,7 +58,7 @@ def obtener_metricas(
 
     Incluye:
     - **RSSI histórico**: lista de (timestamp, rssi_dbm) para gráfico de señal
-    - **PDR estimado**: Packet Delivery Rate = mediciones recibidas / mediciones esperadas
+    - **PDR observado**: identidades recibidas / rango de secuencias por boot
     - **Resumen de reconexiones**: total y tendencia
     - **msg_tx**: crecimiento del contador de mensajes
     - **Indicadores**: último estado de salud conocido
@@ -64,22 +99,13 @@ def obtener_metricas(
         }
 
     # ── PDR (Packet Delivery Rate) ──────────────────────────────────────
-    # Mediciones recibidas en la ventana (tabla mediciones)
-    mediciones_recibidas = (
-        db.query(func.count(Medicion.id))
+    # Use measurement identities, never session counters or nominal row counts.
+    mediciones = (
+        db.query(Medicion)
         .filter(Medicion.device_id == device_id, Medicion.timestamp >= desde)
-        .scalar()
-    ) or 0
-
-    # Mediciones esperadas = ventana_segundos / intervalo_publicacion_segundos
-    # El firmware publica /datos cada METER_COMM_PUBLISH_PERIOD_MS = 60s
-    intervalo_s = 60
-    ventana_s = horas * 3600
-    mediciones_esperadas = ventana_s // intervalo_s
-
-    pdr = None
-    if mediciones_esperadas > 0:
-        pdr = round(min(mediciones_recibidas / mediciones_esperadas, 1.0) * 100, 2)
+        .all()
+    )
+    pdr = sequence_metrics(mediciones)
 
     # ── Reconexiones ────────────────────────────────────────────────────
     # Tomar el primer y último registro para calcular incremento
@@ -87,12 +113,16 @@ def obtener_metricas(
     ultimo_reg = registros[-1]
 
     reconexiones_delta = None
-    if primer_reg.reconexiones is not None and ultimo_reg.reconexiones is not None:
+    if (primer_reg.boot_id == ultimo_reg.boot_id and
+            primer_reg.reconexiones is not None and ultimo_reg.reconexiones is not None and
+            ultimo_reg.reconexiones >= primer_reg.reconexiones):
         reconexiones_delta = ultimo_reg.reconexiones - primer_reg.reconexiones
 
     # ── msg_tx crecimiento ──────────────────────────────────────────────
     msg_tx_delta = None
-    if primer_reg.msg_tx is not None and ultimo_reg.msg_tx is not None:
+    if (primer_reg.boot_id == ultimo_reg.boot_id and
+            primer_reg.msg_tx is not None and ultimo_reg.msg_tx is not None and
+            ultimo_reg.msg_tx >= primer_reg.msg_tx):
         msg_tx_delta = ultimo_reg.msg_tx - primer_reg.msg_tx
 
     # ── msg_tx histórico (para gráfico) ─────────────────────────────────
@@ -117,6 +147,22 @@ def obtener_metricas(
         "mqtt_ok": ultimo.mqtt_ok,
         "cal_ok": ultimo.cal_ok,
         "rssi_dbm": ultimo.rssi_dbm,
+        "radio_valid": ultimo.radio_valid,
+        "rsrp_dbm": ultimo.rsrp_dbm,
+        "rsrq_db": ultimo.rsrq_db,
+        "rssnr_raw": ultimo.rssnr_raw,
+        "sinr_db": ultimo.sinr_db,
+        "boot_id": ultimo.boot_id,
+        "uptime_ms": ultimo.uptime_ms,
+        "ts_device": ultimo.ts_device,
+        "time_valid": ultimo.time_valid,
+        "data_generated_count": ultimo.data_generated_count,
+        "data_publish_attempts": ultimo.data_publish_attempts,
+        "data_publish_ok": ultimo.data_publish_ok,
+        "ac_loss_count": ultimo.ac_loss_count,
+        "ac_restore_count": ultimo.ac_restore_count,
+        "reset_reason": ultimo.reset_reason,
+        "reset_reason_name": ultimo.reset_reason_name,
         "msg_tx": ultimo.msg_tx,
         "reconexiones": ultimo.reconexiones,
         "red_intentos": ultimo.red_intentos,
@@ -131,12 +177,11 @@ def obtener_metricas(
         "device_id": device_id,
         "ventana_horas": horas,
         "registros_salud": len(registros),
-        "pdr": {
-            "porcentaje": pdr,
-            "mediciones_recibidas": mediciones_recibidas,
-            "mediciones_esperadas": mediciones_esperadas,
-            "intervalo_publish_s": intervalo_s,
-        },
+        "pdr": pdr,
+        "radio": {"historico": [{"ts": r.timestamp, "boot_id": r.boot_id,
+            "radio_valid": r.radio_valid, "rsrp_dbm": r.rsrp_dbm,
+            "rsrq_db": r.rsrq_db, "rssnr_raw": r.rssnr_raw, "sinr_db": r.sinr_db}
+            for r in registros]},
         "rssi": {
             "stats": rssi_stats,
             "historico": rssi_historico,
@@ -193,6 +238,22 @@ def obtener_historico_salud(
                 "mqtt_ok": r.mqtt_ok,
                 "cal_ok": r.cal_ok,
                 "rssi_dbm": r.rssi_dbm,
+                "radio_valid": r.radio_valid,
+                "rsrp_dbm": r.rsrp_dbm,
+                "rsrq_db": r.rsrq_db,
+                "rssnr_raw": r.rssnr_raw,
+                "sinr_db": r.sinr_db,
+                "boot_id": r.boot_id,
+                "uptime_ms": r.uptime_ms,
+                "ts_device": r.ts_device,
+                "time_valid": r.time_valid,
+                "data_generated_count": r.data_generated_count,
+                "data_publish_attempts": r.data_publish_attempts,
+                "data_publish_ok": r.data_publish_ok,
+                "ac_loss_count": r.ac_loss_count,
+                "ac_restore_count": r.ac_restore_count,
+                "reset_reason": r.reset_reason,
+                "reset_reason_name": r.reset_reason_name,
                 "msg_tx": r.msg_tx,
                 "reconexiones": r.reconexiones,
                 "red_intentos": r.red_intentos,
@@ -203,4 +264,115 @@ def obtener_historico_salud(
             }
             for r in registros
         ],
+    }
+
+
+@router.get("/{device_id}/estabilidad")
+def obtener_estabilidad(
+    device_id: str,
+    desde: Optional[datetime] = Query(None, description="Inicio UTC inclusivo"),
+    hasta: Optional[datetime] = Query(None, description="Fin UTC inclusivo"),
+    horas: int = Query(default=12, ge=1, le=168),
+    db: Session = Depends(get_db),
+):
+    """Resumen reproducible para una corrida de estabilidad/Objetivo 4."""
+    device_id = device_id.strip().upper()
+    hasta = hasta or datetime.now(timezone.utc)
+    if hasta.tzinfo is None:
+        hasta = hasta.replace(tzinfo=timezone.utc)
+    desde = desde or (hasta - timedelta(hours=horas))
+    if desde.tzinfo is None:
+        desde = desde.replace(tzinfo=timezone.utc)
+    if desde >= hasta:
+        raise HTTPException(status_code=400, detail="desde debe ser anterior a hasta")
+
+    mediciones = (db.query(Medicion)
+        .filter(Medicion.device_id == device_id,
+                Medicion.timestamp >= desde, Medicion.timestamp <= hasta)
+        .order_by(Medicion.timestamp.asc()).all())
+    salud = (db.query(NodoSalud)
+        .filter(NodoSalud.device_id == device_id,
+                NodoSalud.timestamp >= desde, NodoSalud.timestamp <= hasta)
+        .order_by(NodoSalud.timestamp.asc()).all())
+    eventos = (db.query(Evento)
+        .filter(Evento.device_id == device_id,
+                Evento.timestamp >= desde, Evento.timestamp <= hasta)
+        .order_by(Evento.timestamp.asc()).all())
+    if not mediciones and not salud:
+        raise HTTPException(status_code=404, detail="Sin datos en la ventana solicitada")
+
+    pdr = sequence_metrics(mediciones)
+    boots = sorted({r.boot_id for r in mediciones + salud if r.boot_id is not None})
+    latency_ms = [
+        (r.ts_server - r.ts_device).total_seconds() * 1000.0
+        for r in mediciones if r.ts_server is not None and r.ts_device is not None
+        and (r.ts_server - r.ts_device).total_seconds() >= 0
+    ]
+    tipos = {}
+    for event in eventos:
+        tipos[event.tipo] = tipos.get(event.tipo, 0) + 1
+    reset_reasons = []
+    reset_boots = set()
+    for row in salud:
+        if (row.boot_id is not None and row.reset_reason is not None and
+                row.boot_id not in reset_boots):
+            reset_boots.add(row.boot_id)
+            reset_reasons.append({"boot_id": row.boot_id,
+                                  "reason": row.reset_reason_name,
+                                  "code": row.reset_reason})
+
+    def status_pct(field):
+        values = [getattr(r, field) for r in salud if getattr(r, field) is not None]
+        return round(100.0 * sum(bool(v) for v in values) / len(values), 2) if values else None
+
+    return {
+        "device_id": device_id,
+        "ventana": {"desde": desde, "hasta": hasta,
+                    "duracion_horas": round((hasta - desde).total_seconds() / 3600, 3)},
+        "continuidad": {
+            "boot_ids": boots,
+            "cantidad_boots": len(boots),
+            "reinicios_detectados": max(0, len(boots) - 1),
+            "reset_reasons": reset_reasons,
+        },
+        "paquetes": {
+            "generados_dispositivo": _sum_boot_max(salud, "data_generated_count"),
+            "intentos_publicacion": _sum_boot_max(salud, "data_publish_attempts"),
+            "aceptados_por_modem": _sum_boot_max(salud, "data_publish_ok"),
+            "recibidos_unicos_backend": pdr["mediciones_recibidas"],
+            "pdr_observado": pdr,
+        },
+        "latencia_ms": _numeric_stats(latency_ms),
+        "electricas": {
+            "voltaje_v": _numeric_stats([r.voltaje_rms for r in mediciones]),
+            "frecuencia_hz": _numeric_stats([r.frecuencia for r in mediciones]),
+            "corriente_a": _numeric_stats([r.corriente_rms for r in mediciones]),
+            "potencia_w": _numeric_stats([r.potencia_activa for r in mediciones]),
+            "ac_perdidas_contador": _sum_boot_max(salud, "ac_loss_count"),
+            "ac_restauraciones_contador": _sum_boot_max(salud, "ac_restore_count"),
+            "ac_ok_porcentaje_muestras_estado": status_pct("ac_ok"),
+        },
+        "comunicaciones": {
+            "reconexiones_mqtt": _sum_boot_max(salud, "reconexiones"),
+            "intentos_mqtt": _sum_boot_max(salud, "mqtt_intentos"),
+            "sesiones_mqtt_exitosas": _sum_boot_max(salud, "mqtt_exitos"),
+            "intentos_celular": _sum_boot_max(salud, "red_intentos"),
+            "conexiones_celular_exitosas": _sum_boot_max(salud, "red_exitos"),
+            "mqtt_ok_porcentaje_muestras_estado": status_pct("mqtt_ok"),
+            "modem_ok_porcentaje_muestras_estado": status_pct("modem_ok"),
+            "rsrp_dbm": _numeric_stats([r.rsrp_dbm for r in salud]),
+            "rsrq_db": _numeric_stats([r.rsrq_db for r in salud]),
+            "sinr_db": _numeric_stats([r.sinr_db for r in salud]),
+        },
+        "ade": {
+            "disponibilidad_porcentaje_muestras_estado": status_pct("ade_ok"),
+            "perdidas": _sum_boot_max(salud, "ade_perdidas"),
+            "recuperaciones": _sum_boot_max(salud, "ade_rec"),
+        },
+        "alarmas": {
+            "total": len(eventos),
+            "activas_al_cierre": sum(1 for e in eventos if e.activo),
+            "por_tipo": tipos,
+        },
+        "limitacion": "Sin microSD, el PDR solo cubre huecos entre la primera y ultima secuencia recibidas por boot.",
     }

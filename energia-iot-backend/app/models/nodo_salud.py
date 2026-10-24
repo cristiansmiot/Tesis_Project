@@ -1,5 +1,5 @@
 """NodoSalud - Historial de salud y métricas de transmisión del nodo ESP32"""
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Index
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, Float, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -26,15 +26,31 @@ class NodoSalud(Base):
 
     # ── Métricas de transmisión ───────────────────────────────────────────
     rssi_dbm      = Column(Float,   nullable=True)  # Señal celular (dBm), -127 = N/A
-    msg_tx        = Column(Integer, nullable=True)  # Mensajes /datos publicados (=mqtt_exitos)
-    reconexiones  = Column(Integer, nullable=True)  # Sesiones MQTT establecidas (=red_exitos)
+    msg_tx        = Column(Integer, nullable=True)  # /datos aceptados por el modem, incluidos reenvios
+    reconexiones  = Column(Integer, nullable=True)  # Sesiones MQTT exitosas menos la inicial
+    radio_valid = Column(Boolean, nullable=True)
+    rsrp_dbm = Column(Float, nullable=True)
+    rsrq_db = Column(Float, nullable=True)
+    rssnr_raw = Column(Float, nullable=True)
+    sinr_db = Column(Float, nullable=True)
+    boot_id = Column(BigInteger, nullable=True)
+    uptime_ms = Column(BigInteger, nullable=True)
+    ts_device = Column(DateTime(timezone=True), nullable=True)
+    time_valid = Column(Boolean, nullable=True)
+    data_generated_count = Column(BigInteger, nullable=True)
+    data_publish_attempts = Column(BigInteger, nullable=True)
+    data_publish_ok = Column(BigInteger, nullable=True)
+    ac_loss_count = Column(Integer, nullable=True)
+    ac_restore_count = Column(Integer, nullable=True)
+    reset_reason = Column(Integer, nullable=True)
+    reset_reason_name = Column(String(32), nullable=True)
 
     # ── Contadores de confiabilidad (desde arranque del firmware) ─────────
     ade_perdidas    = Column(Integer, nullable=True)  # Veces que el ADE perdió comunicación
     red_intentos    = Column(Integer, nullable=True)  # Intentos de conexión celular
     red_exitos      = Column(Integer, nullable=True)  # Conexiones celulares exitosas
     mqtt_intentos   = Column(Integer, nullable=True)  # Intentos de sesión MQTT
-    mqtt_exitos     = Column(Integer, nullable=True)  # Sesiones MQTT exitosas (=msg_tx en modelo nuevo)
+    mqtt_exitos     = Column(Integer, nullable=True)  # Sesiones MQTT exitosas
 
     # ── Identificación de firmware y hardware ─────────────────────────────
     fw_version = Column(String(20), nullable=True)

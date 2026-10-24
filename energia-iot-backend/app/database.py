@@ -3,7 +3,7 @@ DATABASE - Conexión a la base de datos con SQLAlchemy
 Soporta SQLite para desarrollo local y PostgreSQL para producción (Railway).
 """
 import logging
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
@@ -135,7 +135,7 @@ def init_db() -> None:
     logger.info("Base de datos inicializada correctamente")
 
 
-def _aplicar_migraciones_incrementales() -> None:
+def _aplicar_migraciones_incrementales(engine=None) -> None:
     """Columnas agregadas después del despliegue inicial.
 
     create_all solo crea tablas nuevas, no altera las existentes, así que
@@ -143,19 +143,51 @@ def _aplicar_migraciones_incrementales() -> None:
     (IF NOT EXISTS) y correr en cada arranque no tiene efecto si ya
     aplicaron. SQLite local se recrea completo con create_all.
     """
-    from app.config import settings
-    if settings.USE_SQLITE:
-        return
-    sentencias = [
-        "ALTER TABLE dispositivos ADD COLUMN IF NOT EXISTS etiqueta VARCHAR(50)",
-        "CREATE INDEX IF NOT EXISTS ix_dispositivos_etiqueta ON dispositivos (etiqueta)",
-    ]
-    try:
-        with get_engine().begin() as conn:
-            for sql in sentencias:
-                conn.execute(text(sql))
-    except Exception as e:  # el arranque no debe caerse por una migración
-        logger.warning(f"Migración incremental no aplicada: {e}")
+    target = engine or get_engine()
+    # Inspection works for existing SQLite files as well as PostgreSQL.
+    columns = {
+        "dispositivos": {"etiqueta": "VARCHAR(50)"},
+        "mediciones": {
+            "boot_id": "BIGINT", "seq": "BIGINT", "fw_version": "VARCHAR(20)",
+            "uptime_ms": "BIGINT", "time_valid": "BOOLEAN",
+            "ts_device": "TIMESTAMP WITH TIME ZONE", "ts_server": "TIMESTAMP WITH TIME ZONE",
+            "last_received_at": "TIMESTAMP WITH TIME ZONE", "calibration_status": "INTEGER",
+            "raw_payload": "TEXT", "payload_sha256": "VARCHAR(64)",
+            "duplicate_count": "INTEGER NOT NULL DEFAULT 0",
+            "identity_conflict_count": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "nodo_salud": {
+            "radio_valid": "BOOLEAN", "rsrp_dbm": "FLOAT", "rsrq_db": "FLOAT",
+            "rssnr_raw": "FLOAT", "sinr_db": "FLOAT", "boot_id": "BIGINT",
+            "uptime_ms": "BIGINT", "ts_device": "TIMESTAMP WITH TIME ZONE",
+            "time_valid": "BOOLEAN", "data_generated_count": "BIGINT",
+            "data_publish_attempts": "BIGINT", "data_publish_ok": "BIGINT",
+            "ac_loss_count": "INTEGER", "ac_restore_count": "INTEGER",
+            "reset_reason": "INTEGER", "reset_reason_name": "VARCHAR(32)",
+        },
+        "eventos": {
+            "event_id": "VARCHAR(24)", "module": "VARCHAR(24)",
+            "code": "VARCHAR(50)", "transition": "VARCHAR(20)",
+            "boot_id": "BIGINT", "seq": "BIGINT", "uptime_ms": "BIGINT",
+            "occurrence_count": "INTEGER", "error": "INTEGER",
+            "fw_version": "VARCHAR(20)", "time_valid": "BOOLEAN",
+            "ts_device": "TIMESTAMP WITH TIME ZONE",
+        },
+    }
+    with target.begin() as conn:
+        inspector = inspect(conn)
+        for table, additions in columns.items():
+            if not inspector.has_table(table):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, sql_type in additions.items():
+                if name not in existing:
+                    guard = "IF NOT EXISTS " if target.dialect.name == "postgresql" else ""
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {guard}{name} {sql_type}"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dispositivos_etiqueta ON dispositivos (etiqueta)"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_mediciones_device_boot_seq ON mediciones (device_id, boot_id, seq)"))
+        if inspector.has_table("eventos"):
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_eventos_device_event_id ON eventos (device_id, event_id)"))
 
 
 def test_connection() -> bool:

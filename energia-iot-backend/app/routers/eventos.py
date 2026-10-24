@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.models.evento import Evento
@@ -29,6 +29,18 @@ class EventoResponse(BaseModel):
     umbral: Optional[float]
     mensaje: str
     activo: bool
+    event_id: Optional[str] = None
+    module: Optional[str] = None
+    code: Optional[str] = None
+    transition: Optional[str] = None
+    boot_id: Optional[int] = None
+    seq: Optional[int] = None
+    uptime_ms: Optional[int] = None
+    occurrence_count: Optional[int] = None
+    error: Optional[int] = None
+    fw_version: Optional[str] = None
+    time_valid: Optional[bool] = None
+    ts_device: Optional[datetime] = None
     reconocido_por: Optional[str]
     reconocido_at: Optional[datetime]
     timestamp: Optional[datetime]
@@ -50,6 +62,8 @@ def listar_eventos(
     tipo: Optional[str] = Query(None, description="Filtrar por tipo (sobrevoltaje, subtension, desconexion...)"),
     severidad: Optional[str] = Query(None, description="Filtrar por severidad (info, warning, critical)"),
     activo: Optional[bool] = Query(None, description="Filtrar por estado (true=no reconocida)"),
+    desde: Optional[datetime] = Query(None, description="Inicio UTC inclusivo"),
+    hasta: Optional[datetime] = Query(None, description="Fin UTC inclusivo"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -65,6 +79,14 @@ def listar_eventos(
         query = query.filter(Evento.severidad == severidad)
     if activo is not None:
         query = query.filter(Evento.activo == activo)
+    if desde is not None:
+        if desde.tzinfo is None:
+            desde = desde.replace(tzinfo=timezone.utc)
+        query = query.filter(Evento.timestamp >= desde)
+    if hasta is not None:
+        if hasta.tzinfo is None:
+            hasta = hasta.replace(tzinfo=timezone.utc)
+        query = query.filter(Evento.timestamp <= hasta)
 
     total = query.count()
     eventos = query.order_by(desc(Evento.timestamp)).offset(skip).limit(limit).all()

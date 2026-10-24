@@ -26,12 +26,14 @@ import ssl
 import threading
 import time
 import uuid
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timezone
 from typing import Optional
 
 import paho.mqtt.client as mqtt
 
 from app.config import settings
+from app.services.telemetry_contract import trace_metadata
 
 # Configurar logging
 logger = logging.getLogger("mqtt_client")
@@ -184,11 +186,12 @@ class MQTTClient:
         for record in records:
             name = record.get("n")
             if name is None:
-                # Registro base: conservar bt para mediciones diferidas.
-                # El firmware publica bt=0 en vivo (el backend asigna hora de
-                # recepción) y bt=epoch real cuando entrega backlog desde SD.
+                # Preserve UTC acquisition time and the declared device ID.
+                # Legacy packets may still have bt=0 and no trace identity.
                 if "bt" in record:
                     result["_bt"] = record["bt"]
+                if "bn" in record and record["bn"].startswith("urn:dev:serial:"):
+                    result["_device_id"] = record["bn"].removeprefix("urn:dev:serial:").removesuffix(":/")
                 continue
             if "v" in record:
                 result[name] = record["v"]
@@ -208,6 +211,7 @@ class MQTTClient:
           3. Texto plano     → presencia legacy en topic /conexion
         """
         try:
+            received_at = datetime.now(timezone.utc)
             topic = msg.topic
             raw_payload = msg.payload.decode("utf-8").strip()
 
@@ -253,9 +257,17 @@ class MQTTClient:
                 logger.error(f"Payload inválido en topic {topic}: {raw_payload[:80]}")
                 return
 
+            if not isinstance(data, dict):
+                logger.warning("Payload must be a SenML pack or JSON object")
+                return
+            data["_raw_payload"] = raw_payload
+            if data.get("_device_id", device_id).upper() != device_id.upper():
+                logger.error("SenML device identity does not match topic %s", topic)
+                return
+
             # Procesar según tipo de mensaje
             if msg_type == "datos":
-                self._process_measurement(device_id, data)
+                self._process_measurement(device_id, data, received_at=received_at)
             elif msg_type == "estado":
                 self._process_status(device_id, data, es_retained=es_retained)
             elif msg_type == "alerta":
@@ -270,7 +282,7 @@ class MQTTClient:
     # PROCESAMIENTO DE MENSAJES
     # ==========================================================================
 
-    def _process_measurement(self, device_id: str, data: dict):
+    def _process_measurement(self, device_id: str, data: dict, received_at=None):
         """
         Procesa un mensaje de medición de energía y lo guarda en PostgreSQL.
 
@@ -304,6 +316,7 @@ class MQTTClient:
             return
 
         try:
+            trace = trace_metadata(data, received_at)
             # Importar aquí para evitar imports circulares
             from app.models.medicion import Medicion
             from app.models.dispositivo import Dispositivo
@@ -360,21 +373,21 @@ class MQTTClient:
 
                 # Actualizar estado de conexión del dispositivo
                 dispositivo.conectado = True
-                dispositivo.ultima_conexion = datetime.now(timezone.utc)
+                dispositivo.ultima_conexion = trace["ts_server"]
 
                 # Timestamp: por defecto la hora de recepción. Si el registro
                 # base SenML trae bt absoluto (> 2^28 según RFC 8428 sec 4.5.3)
                 # es una medición diferida del backlog SD del nodo y se respeta
                 # su hora original.
-                ts_medicion = datetime.now(timezone.utc)
-                bt = data.get("_bt")
-                if bt is not None:
-                    try:
-                        bt = float(bt)
-                        if bt > 2**28:
-                            ts_medicion = datetime.fromtimestamp(bt, tz=timezone.utc)
-                    except (TypeError, ValueError, OSError):
-                        pass
+                ts_medicion = trace["ts_device"] or trace["ts_server"]
+                identity = None
+                if trace["boot_id"] is not None:
+                    identity = (Medicion.device_id == device_id,
+                        Medicion.boot_id == trace["boot_id"], Medicion.seq == trace["seq"])
+                    existing = db.query(Medicion).filter(*identity).first()
+                    if existing is not None:
+                        self._save_duplicate(db, existing, trace)
+                        return
 
                 # Crear medición mapeando campos del JSON a campos de la BD
                 medicion = Medicion(
@@ -390,10 +403,20 @@ class MQTTClient:
                     energia_activa=active_energy,
                     energia_reactiva=reactive_energy,
                     timestamp=ts_medicion,
+                    **trace,
                 )
 
                 db.add(medicion)
-                db.commit()
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    # Multiple backend consumers may race on the same packet.
+                    existing = db.query(Medicion).filter(*identity).first() if identity else None
+                    if existing is None:
+                        raise
+                    self._save_duplicate(db, existing, trace)
+                    return
 
                 self.messages_saved += 1
                 logger.info(
@@ -441,6 +464,20 @@ class MQTTClient:
         except Exception as e:
             logger.error(f"Error guardando medición: {e}", exc_info=True)
 
+    @staticmethod
+    def _save_duplicate(db, existing, trace):
+        from app.models.medicion import Medicion
+        conflict = existing.payload_sha256 != trace["payload_sha256"]
+        db.query(Medicion).filter(Medicion.id == existing.id).update({
+            Medicion.duplicate_count: Medicion.duplicate_count + 1,
+            Medicion.identity_conflict_count: Medicion.identity_conflict_count + int(conflict),
+            Medicion.last_received_at: trace["ts_server"],
+        }, synchronize_session=False)
+        db.commit()
+        if conflict:
+            logger.error("Conflicting payload for %s boot=%s seq=%s",
+                         existing.device_id, existing.boot_id, existing.seq)
+
     def _process_status(self, device_id: str, data: dict, es_retained: bool = False):
         """
         Procesa un mensaje del topic /estado (salud del nodo).
@@ -459,7 +496,9 @@ class MQTTClient:
             red_int      (v)     -> red_intentos
             red_ok       (v)     -> red_exitos      (=reconexiones)
             mqtt_int     (v)     -> mqtt_intentos
-            mqtt_ok_cnt  (v)     -> mqtt_exitos     (=msg_tx)
+            mqtt_ok_cnt  (v)     -> mqtt_exitos (sesiones; alias legacy)
+            data_publish_ok     -> msg_tx (aceptacion por el modem)
+            reconnect_count     -> reconexiones (sin sesion inicial)
             rssi_dbm     (v)     -> rssi_dbm
             fw           (vs)    -> fw_version
 
@@ -545,7 +584,12 @@ class MQTTClient:
                 red_intentos  = _int_any("red_int", "red_intentos")
                 red_exitos    = _int_any("red_ok", "red_exitos", "reconexiones")
                 mqtt_intentos = _int_any("mqtt_int", "mqtt_intentos")
-                mqtt_exitos   = _int_any("mqtt_ok_cnt", "mqtt_exitos", "msg_tx")
+                mqtt_exitos   = _int_any("mqtt_sessions_ok", "mqtt_ok_cnt", "mqtt_exitos")
+                msg_tx = _int_any("data_publish_ok", "msg_tx")
+                reconexiones = _int_any("reconnect_count", "reconexiones")
+                clock = trace_metadata({k: data[k] for k in
+                    ("ts_device", "time_valid") if k in data})
+                radio_valid = _bool_any("radio_valid")
 
                 rssi_dbm = _float_any("rssi_dbm", "rssi")
                 imei     = _str_any("imei")
@@ -562,9 +606,24 @@ class MQTTClient:
                     mqtt_ok=mqtt_ok_val,
                     cal_ok=cal_ok,
                     rssi_dbm=rssi_dbm,
-                    # Compatibilidad: msg_tx = mqtt_exitos, reconexiones = red_exitos.
-                    msg_tx=mqtt_exitos,
-                    reconexiones=red_exitos,
+                    msg_tx=msg_tx,
+                    reconexiones=reconexiones,
+                    boot_id=_int_any("boot_id"),
+                    uptime_ms=_int_any("uptime_ms"),
+                    ts_device=clock["ts_device"],
+                    time_valid=clock["time_valid"],
+                    data_generated_count=_int_any("data_generated_count"),
+                    data_publish_attempts=_int_any("data_publish_attempts"),
+                    data_publish_ok=_int_any("data_publish_ok"),
+                    ac_loss_count=_int_any("ac_loss_count"),
+                    ac_restore_count=_int_any("ac_restore_count"),
+                    reset_reason=_int_any("reset_reason"),
+                    reset_reason_name=_str_any("reset_reason_name"),
+                    radio_valid=radio_valid,
+                    rsrp_dbm=_float_any("rsrp_dbm") if radio_valid else None,
+                    rsrq_db=_float_any("rsrq_db") if radio_valid else None,
+                    rssnr_raw=_float_any("rssnr_raw") if radio_valid else None,
+                    sinr_db=_float_any("sinr_db") if radio_valid else None,
                     ade_perdidas=ade_perdidas,
                     red_intentos=red_intentos,
                     red_exitos=red_exitos,
@@ -582,7 +641,7 @@ class MQTTClient:
                     f"/estado {device_id} | "
                     f"ac={ac_ok} carga={carga} ade={ade_ok_val} "
                     f"modem={modem_ok} mqtt={mqtt_ok_val} cal={cal_ok} "
-                    f"rssi={rssi_dbm} pkt_ok={mqtt_exitos} recon={red_exitos}"
+                    f"rssi={rssi_dbm} data_ok={msg_tx} mqtt_sessions={mqtt_exitos} recon={reconexiones}"
                 )
 
             finally:
@@ -644,8 +703,9 @@ class MQTTClient:
             {"type": "overvoltage", "value": 135.5, "threshold": 130.0,
              "message": "..."}
         """
-        # Soporte dual SenML ("tipo") + legacy ("type")
-        tipo_raw = data.get("tipo") or data.get("type") or ""
+        # Soporte de eventos de salud (code) y alertas PQ/legacy.
+        tipo_raw = data.get("code") or data.get("tipo") or data.get("type") or ""
+        tipo_raw = str(tipo_raw).strip().lower()
         valor = data.get("vrms", data.get("value"))
         pq_flags = data.get("pq")
         umbral = data.get("threshold")
@@ -682,11 +742,41 @@ class MQTTClient:
             tipo = tipo_map.get(tipo_raw, tipo_raw or "alerta_firmware")
 
             severidad_critical = {"sobrevoltaje", "subtension", "sobretemperatura"}
-            severidad = "critical" if tipo in severidad_critical else "warning"
+            severity_in = str(data.get("severity") or "").strip().lower()
+            severidad = (severity_in if severity_in in {"info", "warning", "critical"}
+                         else ("critical" if tipo in severidad_critical else "warning"))
+            transition = str(data.get("transition") or "").strip().lower() or None
+            event_id = str(data.get("event_id") or "").strip() or None
+            module = str(data.get("module") or "").strip().lower() or None
+            code = str(data.get("code") or "").strip().lower() or None
+
+            try:
+                boot_id = int(data["boot_id"]) if data.get("boot_id") is not None else None
+                seq = int(data["seq"]) if data.get("seq") is not None else None
+                uptime_ms = int(data["uptime_ms"]) if data.get("uptime_ms") is not None else None
+                occurrence_count = int(data["count"]) if data.get("count") is not None else None
+                error = int(data["error"]) if data.get("error") is not None else None
+            except (TypeError, ValueError, OverflowError):
+                boot_id = seq = uptime_ms = occurrence_count = error = None
+
+            clock_data = {k: data[k] for k in
+                          ("boot_id", "seq", "ts_device", "time_valid") if k in data}
+            try:
+                event_clock = trace_metadata(clock_data)
+            except ValueError:
+                event_clock = {"ts_device": None, "time_valid": False}
+
+            # Los eventos informativos y de recuperacion quedan en el historial,
+            # pero no deben inflar el contador de alarmas activas.
+            activo = not (transition == "cleared" or severidad == "info" or
+                          tipo in {"ac_restored", "time_synced", "module_ready"})
 
             # Mensaje legible: usa el mensaje del payload si viene, si no, construye uno.
             if mensaje_in:
                 mensaje = mensaje_in
+            elif code:
+                mensaje = (f"{code} module={module or 'unknown'} "
+                           f"transition={transition or 'occurrence'}")
             elif valor is not None:
                 mensaje = f"Alerta {tipo}: Vrms={valor:.1f}V"
             else:
@@ -694,6 +784,25 @@ class MQTTClient:
 
             db = self._db_session_factory()
             try:
+                if event_id:
+                    existing = (db.query(Evento)
+                        .filter(Evento.device_id == device_id,
+                                Evento.event_id == event_id).first())
+                    if existing is not None:
+                        logger.info("Evento duplicado ignorado: %s %s", device_id, event_id)
+                        return
+
+                # Una transicion CLEARED resuelve su alarma previa. AC_RESTORED
+                # resuelve especificamente AC_LOST sin borrar la evidencia.
+                resolve_tipo = ("ac_lost" if tipo == "ac_restored"
+                                else tipo if transition == "cleared" else None)
+                if resolve_tipo:
+                    (db.query(Evento)
+                       .filter(Evento.device_id == device_id,
+                               Evento.tipo == resolve_tipo,
+                               Evento.activo.is_(True))
+                       .update({Evento.activo: False}, synchronize_session=False))
+
                 evento = Evento(
                     device_id=device_id,
                     tipo=tipo,
@@ -701,7 +810,19 @@ class MQTTClient:
                     valor=valor,
                     umbral=umbral,
                     mensaje=mensaje,
-                    activo=True,
+                    activo=activo,
+                    event_id=event_id,
+                    module=module,
+                    code=code,
+                    transition=transition,
+                    boot_id=boot_id,
+                    seq=seq,
+                    uptime_ms=uptime_ms,
+                    occurrence_count=occurrence_count,
+                    error=error,
+                    fw_version=str(data.get("fw"))[:20] if data.get("fw") else None,
+                    time_valid=event_clock.get("time_valid"),
+                    ts_device=event_clock.get("ts_device"),
                 )
                 db.add(evento)
                 db.commit()

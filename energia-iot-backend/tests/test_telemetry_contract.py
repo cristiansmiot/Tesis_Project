@@ -112,6 +112,56 @@ class TelemetryContractTests(unittest.TestCase):
             self.assertEqual(rows[1].tipo, "ac_restored")
             self.assertEqual(rows[0].boot_id, 7)
 
+    def test_live_status_resolves_old_sim_and_ac_alarms(self):
+        self.client._process_measurement("TEST-1", self.data, self.received)
+        self.client._process_alert("TEST-1", {
+            "event_id": "sim-old", "module": "sim_modem", "code": "sim_off",
+            "transition": "occurrence", "severity": "warning",
+        })
+        self.client._process_alert("TEST-1", {
+            "event_id": "ac-old", "module": "system", "code": "ac_lost",
+            "transition": "occurrence", "severity": "warning",
+        })
+        self.client._process_status("TEST-1", {"red_cel": True, "ac": True},
+                                    es_retained=True)
+        with self.sessions() as db:
+            self.assertEqual(db.query(Evento).filter(Evento.activo.is_(True)).count(), 2)
+        self.client._process_status("TEST-1", {"red_cel": False, "ac": False})
+        with self.sessions() as db:
+            self.assertEqual(db.query(Evento).filter(Evento.activo.is_(True)).count(), 2)
+        self.client._process_status("TEST-1", {"red_cel": True, "ac": True})
+        with self.sessions() as db:
+            rows = db.query(Evento).filter(Evento.tipo.in_(["sim_off", "ac_lost"])).all()
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(all(not row.activo and row.fin_at is not None for row in rows))
+
+    def test_module_ready_closes_sim_off_occurrence(self):
+        self.client._process_alert("TEST-1", {
+            "event_id": "sim-fail", "module": "sim_modem", "code": "sim_off",
+            "transition": "occurrence", "severity": "warning",
+        })
+        self.client._process_alert("TEST-1", {
+            "event_id": "sim-ready", "module": "sim_modem", "code": "module_ready",
+            "transition": "occurrence", "severity": "info",
+        })
+        with self.sessions() as db:
+            row = db.query(Evento).filter(Evento.tipo == "sim_off").one()
+            self.assertFalse(row.activo)
+            self.assertIsNotNone(row.fin_at)
+
+    def test_subscriber_requests_qos_one(self):
+        class FakeClient:
+            def __init__(self):
+                self.subscription = None
+
+            def subscribe(self, topic, qos):
+                self.subscription = (topic, qos)
+
+        fake = FakeClient()
+        self.client.client = fake
+        self.client._on_connect(fake, None, None, SimpleNamespace(is_failure=False), None)
+        self.assertEqual(fake.subscription, ("medidor/#", 1))
+
     def test_legacy_session_count_is_not_misread_as_data_count(self):
         self.client._process_measurement("TEST-1", self.data, self.received)
         self.client._process_status("TEST-1", {"mqtt_ok_cnt": 12,

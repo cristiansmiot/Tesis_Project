@@ -21,11 +21,9 @@ Fecha: Febrero 2026
 
 import json
 import logging
-import os
 import ssl
 import threading
 import time
-import uuid
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timezone
 from typing import Optional
@@ -74,13 +72,16 @@ class MQTTClient:
         self.username = username
         self.password = password
         self.topic_base = topic_base
-        self.client_id = client_id or self._generate_client_id()
+        # Un ID estable permite reanudar la suscripcion QoS 1 tras reiniciar
+        # el backend. Usar una sola replica para este consumidor.
+        self.client_id = client_id or "smartmeter-backend-ingest"
         self.use_tls = use_tls
 
         # Cliente MQTT (paho-mqtt v2)
         self.client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=self.client_id,
+            clean_session=False,
             protocol=mqtt.MQTTv311,
         )
         self.client.username_pw_set(self.username, self.password)
@@ -118,11 +119,6 @@ class MQTTClient:
         self.messages_saved = 0
         self.last_message_at: Optional[datetime] = None
 
-    @staticmethod
-    def _generate_client_id() -> str:
-        """Genera client_id único por proceso para evitar colisiones entre instancias."""
-        return f"backend_{os.getpid()}_{uuid.uuid4().hex[:6]}"
-
     def set_db_session_factory(self, session_factory):
         """
         Configura la fábrica de sesiones de base de datos.
@@ -146,7 +142,7 @@ class MQTTClient:
             )
 
             # Suscribirse a todos los topics del medidor
-            self.client.subscribe(self.topic_base, qos=0)
+            self.client.subscribe(self.topic_base, qos=1)
             logger.info(f"Suscrito a: {self.topic_base}")
         else:
             self.is_connected = False
@@ -644,6 +640,27 @@ class MQTTClient:
                 clock = trace_metadata({k: data[k] for k in
                     ("ts_device", "time_valid") if k in data})
                 radio_valid = _bool_any("rv", "radio_valid")
+
+                # Un estado vivo confirma recuperacion aunque el aviso de
+                # restauracion anterior no haya llegado. Los retained nunca
+                # cierran incidentes porque pueden representar estado antiguo.
+                if not es_retained and (modem_ok is True or ac_ok is True):
+                    from app.models.evento import Evento
+                    recovered_types = []
+                    if modem_ok is True:
+                        recovered_types.append("sim_off")
+                    if ac_ok is True:
+                        recovered_types.append("ac_lost")
+                    resolved = (db.query(Evento)
+                        .filter(Evento.device_id == device_id,
+                                Evento.tipo.in_(recovered_types),
+                                Evento.activo.is_(True))
+                        .update({Evento.activo: False,
+                                 Evento.fin_at: datetime.now(timezone.utc)},
+                                synchronize_session=False))
+                    if resolved:
+                        logger.info("/estado %s: %d alarmas antiguas cerradas por estado vivo",
+                                    device_id, resolved)
 
                 rssi_dbm = _float_any("rssi_dbm", "rssi")
                 imei     = _str_any("imei")

@@ -218,3 +218,23 @@ relevantes y configuración están en
 `evidence/versions/2026-10-29_tcpdiag-r7-dns-test/`; el registro serial está
 en `evidence/sim-tcpdiag-r7-20261029.log`. Informe:
 `docs/PRUEBA_TCP_R7_2026-10-29.md`.
+
+## Reconexión ante cortes de datos — `1.1.0-mqtt-r2` y `1.1.0-obj4-q1-rc1`
+
+Commit de código `f69c0b7` (rama `fix/firmware-reconexion-mqtt`, sobre el
+checkpoint `3f5b8c9`). Motivo: el 29-oct se comprobó que los cortes de MQTT
+son cortes de datos del lado celular (registro y PDP activos, sin paso de
+datos; ~28 min arriba / 12–36 min abajo) y que el firmware los agravaba con
+ciclos PDP cada ~68 s, barridos de baudios sobre un módem ocupado, reescritura
+de CNMP/CMNB en cada re-probe y cierre de sesiones SMCONN completadas tarde.
+
+| Perfil | Versión | SHA-256 del binario | Bytes |
+|---|---|---|---|
+| `test_sim_mqtt` | `1.1.0-mqtt-r2` | `B1EBD7130186BF26C54EE3EA4DBEAE02D40B0DF9538B219031CCA4A6B51167F8` | 502 464 |
+| `integration_qos1_reconnect` | `1.1.0-obj4-q1-rc1` | `8FB149F84C4512F852935070E39FA4167BC27D1D31FED1A8FBE4C3C952599CB4` | 498 768 |
+
+Estado: compilado, **pendiente de validación** con al menos dos cortes reales.
+Criterios: ≤1 ciclo PDP por corte; ningún barrido de baudios ni PWRKEY con el
+módem respondiendo en los 5 min previos; ninguna secuencia
+CONNECT→DISCONNECT→CONNECT en el broker; primera publicación ≤60 s después de
+que la red vuelve; respaldo SD drenado sin huecos ni duplicados.

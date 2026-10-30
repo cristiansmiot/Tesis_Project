@@ -116,19 +116,70 @@ static esp_err_t msure_read_result(msure_result_t *out)
     return ESP_OK;
 }
 
-static esp_err_t msure_apply_gains(const msure_result_t *result)
+static esp_err_t msure_apply_gains(const msure_result_t *result, bool apply_a, bool apply_v)
 {
-    esp_err_t err = ade9153a_write_reg32(ADE9153A_REG_AIGAIN, (uint32_t)result->aigain);
-    if (err != ESP_OK) {
-        LOG_WARN(TAG, "AIGAIN write failed");
-        return err;
+    if (apply_a) {
+        const esp_err_t err = ade9153a_write_reg32(ADE9153A_REG_AIGAIN,
+                                                   (uint32_t)result->aigain);
+        if (err != ESP_OK) {
+            LOG_WARN(TAG, "AIGAIN write failed");
+            return err;
+        }
     }
-    err = ade9153a_write_reg32(ADE9153A_REG_AVGAIN, (uint32_t)result->avgain);
-    if (err != ESP_OK) {
-        LOG_WARN(TAG, "AVGAIN write failed");
-        return err;
+
+    if (apply_v) {
+        const esp_err_t err = ade9153a_write_reg32(ADE9153A_REG_AVGAIN,
+                                                   (uint32_t)result->avgain);
+        if (err != ESP_OK) {
+            LOG_WARN(TAG, "AVGAIN write failed");
+            return err;
+        }
     }
     return ESP_OK;
+}
+
+static bool msure_selected_results_are_plausible(const msure_result_t *result,
+                                                  bool check_a,
+                                                  bool check_v)
+{
+    if (result == NULL) {
+        return false;
+    }
+
+    const float aicc_min = TARGET_AICC * METER_MSURE_CC_MIN_RATIO;
+    const float aicc_max = TARGET_AICC * METER_MSURE_CC_MAX_RATIO;
+    const float avcc_min = TARGET_AVCC * METER_MSURE_CC_MIN_RATIO;
+    const float avcc_max = TARGET_AVCC * METER_MSURE_CC_MAX_RATIO;
+
+    if (check_a && (!isfinite(result->aicc_nA_per_code) ||
+                    (result->aicc_nA_per_code < aicc_min) ||
+                    (result->aicc_nA_per_code > aicc_max))) {
+        return false;
+    }
+    if (check_v && (!isfinite(result->avcc_nV_per_code) ||
+                    (result->avcc_nV_per_code < avcc_min) ||
+                    (result->avcc_nV_per_code > avcc_max))) {
+        return false;
+    }
+    return true;
+}
+
+static bool msure_selected_cert_is_valid(const msure_result_t *result,
+                                         bool check_a,
+                                         bool check_v)
+{
+    if (result == NULL) {
+        return false;
+    }
+    if (check_a && ((result->aicert_raw < 0) ||
+                    (result->aicert_raw > (int32_t)METER_MSURE_CERT_PPM))) {
+        return false;
+    }
+    if (check_v && ((result->avcert_raw < 0) ||
+                    (result->avcert_raw > (int32_t)METER_MSURE_CERT_PPM))) {
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -179,14 +230,14 @@ esp_err_t msure_run(bool run_a, bool run_v, msure_mode_t mode, msure_result_t *o
         return err;
     }
 
-    if (!msure_result_is_plausible(out)) {
+    if (!msure_selected_results_are_plausible(out, run_a, run_v)) {
         LOG_WARN(TAG,
                  "mSure result out of plausible range: AICC=%.3f AVCC=%.3f",
                  (double)out->aicc_nA_per_code,
                  (double)out->avcc_nV_per_code);
         return ESP_ERR_INVALID_RESPONSE;
     }
-    if (!msure_cert_is_valid(out)) {
+    if (!msure_selected_cert_is_valid(out, run_a, run_v)) {
         LOG_WARN(TAG,
                  "mSure certainty invalid: AICERT=%ld AVCERT=%ld lim=%d",
                  (long)out->aicert_raw,
@@ -195,7 +246,7 @@ esp_err_t msure_run(bool run_a, bool run_v, msure_mode_t mode, msure_result_t *o
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    err = msure_apply_gains(out);
+    err = msure_apply_gains(out, run_a, run_v);
     if (err != ESP_OK) {
         return err;
     }
@@ -214,38 +265,11 @@ esp_err_t msure_run(bool run_a, bool run_v, msure_mode_t mode, msure_result_t *o
 
 bool msure_cert_is_valid(const msure_result_t *result)
 {
-    if (result == NULL) {
-        return false;
-    }
-    if ((result->aicert_raw < 0) || (result->avcert_raw < 0)) {
-        return false;
-    }
-    return (result->aicert_raw <= (int32_t)METER_MSURE_CERT_PPM) &&
-           (result->avcert_raw <= (int32_t)METER_MSURE_CERT_PPM);
+    return msure_selected_cert_is_valid(result, true, true);
 }
 
 bool msure_result_is_plausible(const msure_result_t *result)
 {
-    if (result == NULL) {
-        return false;
-    }
-
-    if (!isfinite(result->aicc_nA_per_code) || !isfinite(result->avcc_nV_per_code)) {
-        return false;
-    }
-
-    const float aicc_min = TARGET_AICC * METER_MSURE_CC_MIN_RATIO;
-    const float aicc_max = TARGET_AICC * METER_MSURE_CC_MAX_RATIO;
-    const float avcc_min = TARGET_AVCC * METER_MSURE_CC_MIN_RATIO;
-    const float avcc_max = TARGET_AVCC * METER_MSURE_CC_MAX_RATIO;
-
-    if ((result->aicc_nA_per_code < aicc_min) || (result->aicc_nA_per_code > aicc_max)) {
-        return false;
-    }
-    if ((result->avcc_nV_per_code < avcc_min) || (result->avcc_nV_per_code > avcc_max)) {
-        return false;
-    }
-
-    return true;
+    return msure_selected_results_are_plausible(result, true, true);
 }
 

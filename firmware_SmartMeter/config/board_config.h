@@ -53,27 +53,32 @@
 #define DS3231_I2C_ADDR         0x68
 #define DS3231_I2C_TIMEOUT_MS   250U
 
-// Sprint 6 - MicroSD Card. La PCB comparte MOSI/MISO/SCLK con el ADE9153A
-// sobre SPI2_HOST; cada dispositivo conserva un CS independiente.
-// Esquema PCB: MOSI=GPIO11, SCLK=GPIO12, MISO=GPIO13, SD_CS=GPIO7.
+// Sprint 6 - MicroSD Card. Comparte MOSI/MISO/SCLK con el ADE9153A sobre
+// SPI2_HOST y conserva CS independiente. El hardware debe garantizar que la
+// rama MISO_SD quede en alta impedancia con SD_CS alto (buffer triestado).
 #define SD_SPI_HOST             ADE9153A_SPI_HOST
 #define SD_PIN_MOSI             ADE9153A_PIN_MOSI
 #define SD_PIN_MISO             ADE9153A_PIN_MISO
 #define SD_PIN_SCLK             ADE9153A_PIN_SCLK
 #define SD_PIN_CS               7
-// Frecuencia de operacion; en init se usa 400 kHz por SPI_SDIO.
-#define SD_SPI_CLK_HZ           20000000
+// Frecuencia conservadora para el bus compartido de la PCB. La telemetria
+// genera muy poco trafico y 4 MHz da mayor margen de integridad que 20 MHz.
+// La fase de identificacion de la tarjeta sigue usando la frecuencia baja
+// definida por el controlador SDSPI de ESP-IDF.
+#define SD_SPI_CLK_HZ           4000000
 // Punto de montaje VFS.
 #define SD_MOUNT_POINT          "/sdcard"
 
-// Sprint 4 - Botones navegacion
-// GPIO1 y GPIO2 son entradas generales y quedan juntos en el header J3.
-// GPIO42 tambien queda contiguo en el header y funciona bien como entrada,
-// pero coincide con MTMS. Si en el futuro se usa JTAG externo por GPIO39-42,
-// conviene mover este boton a otro GPIO libre.
-#define PIN_BTN_UP              1
-#define PIN_BTN_SELECT          2
-#define PIN_BTN_DOWN            42
+// Sprint 4 - Teclado de membrana 1x4.
+// El comun del teclado se conecta a GND y cada tecla cierra su GPIO a GND;
+// el driver habilita los pull-up internos del ESP32-S3.
+// GPIO41/GPIO42 coinciden con MTDI/MTMS. Si en el futuro se usa JTAG externo
+// por GPIO39-42, conviene mover BACK/DOWN a otros GPIO libres.
+// Orden fisico de arriba hacia abajo en la membrana: 4, 3, 2, 1.
+#define PIN_BTN_UP              2   // tecla 4
+#define PIN_BTN_DOWN            1   // tecla 3
+#define PIN_BTN_SELECT          41  // tecla 2
+#define PIN_BTN_BACK            42  // tecla 1
 #define BUTTON_DEBOUNCE_MS      50U
 #define BUTTON_LONGPRESS_MS     800U
 

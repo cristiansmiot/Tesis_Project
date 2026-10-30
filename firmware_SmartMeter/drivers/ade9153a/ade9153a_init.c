@@ -383,6 +383,40 @@ esp_err_t ade9153a_reset(void)
 }
 
 /**
+ * @brief Reinicia el ADE por CONFIG1.SWRST sin depender de la pista RESET.
+ *
+ * UG-1247 indica que CONFIG1 bit 0 es W1/autolimpiable y ejecuta la misma
+ * secuencia interna de alimentacion que RESET. Es la ruta preferida durante
+ * operacion porque el enlace SPI ya fue validado y evita depender del nivel
+ * electrico del pin RESET de la PCB ensamblada.
+ */
+static esp_err_t ade9153a_software_reset(void)
+{
+    const ADE9153A_HAL_t *hal = ade9153a_hal_get();
+    if (hal == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    uint16_t config1 = 0U;
+    esp_err_t err = ade9153a_read_reg16(ADE9153A_REG_CONFIG1, &config1);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = ade9153a_write_reg16(
+        ADE9153A_REG_CONFIG1,
+        (uint16_t)(config1 | (uint16_t)ADE9153A_CONFIG1_SWRST));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* La secuencia nominal termina en decenas de ms; 1 s conserva el margen
+     * usado por el arranque inicial y cubre estabilizacion de la EV board. */
+    hal->platform_delay_ms(1000U);
+    return ESP_OK;
+}
+
+/**
  * @brief Arranca DSP de metrologia.
  * @return ESP_OK en caso de exito.
  */
@@ -496,55 +530,27 @@ esp_err_t ade9153a_recover(ade9153a_recovery_action_t action)
         }
     }
 
-    // Fase 1: reset hardware con timing generoso (incluye pre-reset delay).
-    const esp_err_t reset_err = ade9153a_reset();
+    // Fase 1: reset software por SPI. El reset fisico ya se valida en el
+    // arranque inicial; en runtime SWRST evita depender de la pista RESET.
+    const esp_err_t reset_err = ade9153a_software_reset();
     if (reset_err != ESP_OK) {
         return reset_err;
     }
 
-    // Fase 2: verificar que el bus SPI responde antes de intentar configurar.
-    // Tras un reset el ADE puede necesitar tiempo extra para estabilizar Vcc
-    // y el oscilador interno. Se reintenta la lectura de VERSION hasta 3 veces
-    // con esperas progresivas para cubrir arranques lentos.
+    // Fase 2: diagnostico previo, no puerta de entrada. En la EV board VERSION
+    // puede leerse como 0 mientras RUN sigue en 0 despues del reset. UG-1247
+    // define la secuencia como reset -> configurar -> RUN; por tanto la
+    // identidad se exige despues de arrancar el DSP, no antes.
     uint16_t ver_check = 0U;
-    esp_err_t ver_err = ESP_FAIL;
-    bool ver_ok = false;
-    for (uint8_t ver_try = 0U; ver_try < 3U; ++ver_try) {
-        if (ver_try > 0U) {
-            const ADE9153A_HAL_t *hal_retry = ade9153a_hal_get();
-            if (hal_retry != NULL) {
-                hal_retry->platform_delay_ms(500U);
-            }
-        }
-        ver_check = 0U;
-        ver_err = ade9153a_read_reg16(ADE9153A_REG_VERSION, &ver_check);
-        if ((ver_err == ESP_OK) && (ver_check != 0xFFFFU) && (ver_check != 0x0000U)) {
-            ver_ok = true;
-            break;
-        }
-        LOG_WARN(TAG,
-                 "ADE VERSION read attempt %u/3: 0x%04x err=%s",
-                 (unsigned)(ver_try + 1U),
-                 (unsigned)ver_check,
-                 esp_err_to_name(ver_err));
+    const esp_err_t ver_err = ade9153a_read_reg16(
+        ADE9153A_REG_VERSION, &ver_check);
+    if (ver_err != ESP_OK) {
+        return ver_err;
     }
-    if (!ver_ok) {
-        LOG_WARN(TAG,
-                 "ADE no responde tras reset (VERSION=0x%04x err=%s) - sin alimentacion?",
-                 (unsigned)ver_check,
-                 esp_err_to_name(ver_err));
-        ade9153a_diag_t fail_diag = {0};
-        fail_diag.bus_disconnected = true;
-        fail_diag.probe_err = ESP_ERR_INVALID_RESPONSE;
-        fail_diag.last_action = action;
-        fail_diag.recovery_count = s_last_diag.recovery_count;
-        ade9153a_diag_store(&fail_diag);
-        return ESP_ERR_INVALID_RESPONSE;
-    }
+    LOG_INFO(TAG, "ADE post-reset pre-RUN VERSION=0x%04x - configurando",
+             (unsigned)ver_check);
 
-    LOG_INFO(TAG, "ADE responde tras reset (VERSION=0x%04x) - configurando", (unsigned)ver_check);
-
-    // Fase 3: bus vivo - aplicar configuracion completa y arrancar DSP.
+    // Fase 3: aplicar configuracion completa y arrancar DSP.
     const esp_err_t cfg_err = ade9153a_configure_and_start();
     if (cfg_err != ESP_OK) {
         return cfg_err;

@@ -103,6 +103,10 @@ typedef enum {
     SYSTEM_EVENT_SPI_ERROR,
     SYSTEM_EVENT_ADC_ERROR,
     SYSTEM_EVENT_RTC_BACKUP_LOST,
+    /* Append new values to preserve the numeric contract of existing codes. */
+    SYSTEM_EVENT_SIM_OFF,
+    SYSTEM_EVENT_AC_LOST,
+    SYSTEM_EVENT_AC_RESTORED,
     SYSTEM_EVENT_CODE_COUNT,
 } system_event_code_t;
 

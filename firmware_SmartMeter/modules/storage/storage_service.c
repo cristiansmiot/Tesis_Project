@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "esp_timer.h"
+#include "data_serializer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -13,6 +14,7 @@
 #include "meter_config.h"
 #include "meter_data.h"
 #include "mqtt_topics.h"
+#include "node_health.h"
 #include "rtos_app_config.h"
 #include "sd_storage.h"
 #include "system_health.h"
@@ -32,6 +34,7 @@ typedef struct {
 
 #define STORAGE_NORMAL_QUEUE_LEN 10U
 #define STORAGE_HIGH_QUEUE_LEN    8U
+#define STORAGE_STACK_LOG_PERIOD_MS (5LL * 60LL * 1000LL)
 
 static const char *TAG = "storage_service";
 static TaskHandle_t s_task_handle;
@@ -48,8 +51,17 @@ static SemaphoreHandle_t s_snapshot_mutex;
 static storage_service_snapshot_t s_snapshot;
 static char s_telemetry_head[STORAGE_SERVICE_PAYLOAD_MAX];
 static char s_alert_head[STORAGE_SERVICE_PAYLOAD_MAX];
+/*
+ * The storage service is single-threaded.  Keep its large formatting buffers
+ * in static storage instead of placing 3.5-5.5 KiB on task_storage's stack.
+ * This also leaves a measurable margin for FATFS/newlib call frames.
+ */
+static char s_line_scratch[STORAGE_SERVICE_LINE_MAX];
+static char s_payload_scratch[STORAGE_SERVICE_PAYLOAD_MAX];
 static bool s_telemetry_claimed;
 static bool s_alert_claimed;
+static bool s_telemetry_ack_queued;
+static bool s_alert_ack_queued;
 static bool s_telemetry_head_invalid;
 static bool s_alert_head_invalid;
 static uint32_t s_mount_failures;
@@ -57,6 +69,7 @@ static int64_t s_next_mount_ms;
 static bool s_queue_overflow_reported;
 static int64_t s_last_usage_ms;
 static int64_t s_last_history_ms;
+static int64_t s_last_stack_log_ms;
 
 #if defined(STORAGE_SERVICE_TEST_HOOKS) && (STORAGE_SERVICE_TEST_HOOKS != 0)
 static bool s_usage_injected;
@@ -177,13 +190,30 @@ esp_err_t storage_service_submit_event(const char *json_line)
 
 esp_err_t storage_service_ack_pending(storage_record_kind_t kind)
 {
-    if (kind == STORAGE_RECORD_TELEMETRY) {
-        return storage_enqueue(STORAGE_REQ_ACK_TELEMETRY, NULL, false);
+    if ((s_snapshot_mutex == NULL) ||
+        ((kind != STORAGE_RECORD_TELEMETRY) && (kind != STORAGE_RECORD_ALERT))) {
+        return ESP_ERR_INVALID_ARG;
     }
-    if (kind == STORAGE_RECORD_ALERT) {
-        return storage_enqueue(STORAGE_REQ_ACK_ALERT, NULL, true);
+    bool *ack_queued = kind == STORAGE_RECORD_TELEMETRY
+        ? &s_telemetry_ack_queued : &s_alert_ack_queued;
+    storage_lock();
+    const bool claimed = kind == STORAGE_RECORD_TELEMETRY
+        ? s_telemetry_claimed : s_alert_claimed;
+    if (*ack_queued || !claimed) {
+        storage_unlock();
+        return ESP_ERR_INVALID_STATE;
     }
-    return ESP_ERR_INVALID_ARG;
+    *ack_queued = true;
+    storage_unlock();
+    const esp_err_t err = storage_enqueue(kind == STORAGE_RECORD_TELEMETRY
+        ? STORAGE_REQ_ACK_TELEMETRY : STORAGE_REQ_ACK_ALERT, NULL,
+        kind == STORAGE_RECORD_ALERT);
+    if (err != ESP_OK) {
+        storage_lock();
+        *ack_queued = false;
+        storage_unlock();
+    }
+    return err;
 }
 
 esp_err_t storage_service_get_snapshot(storage_service_snapshot_t *out)
@@ -208,9 +238,9 @@ esp_err_t storage_service_peek_pending(storage_record_kind_t kind,
     }
     const char *source = NULL;
     storage_lock();
-    if ((kind == STORAGE_RECORD_TELEMETRY) && s_telemetry_claimed) {
+    if ((kind == STORAGE_RECORD_TELEMETRY) && s_telemetry_claimed && !s_telemetry_ack_queued) {
         source = s_telemetry_head;
-    } else if ((kind == STORAGE_RECORD_ALERT) && s_alert_claimed) {
+    } else if ((kind == STORAGE_RECORD_ALERT) && s_alert_claimed && !s_alert_ack_queued) {
         source = s_alert_head;
     }
     if ((source == NULL) || (source[0] == '\0')) {
@@ -463,7 +493,7 @@ static esp_err_t storage_write_request(const storage_request_t *request)
         return ESP_ERR_NO_MEM;
     }
     const char *path = NULL;
-    char wrapped[STORAGE_SERVICE_LINE_MAX];
+    char *const wrapped = s_line_scratch;
     const char *line = request->line;
     esp_err_t err = ESP_OK;
     switch (request->type) {
@@ -471,14 +501,14 @@ static esp_err_t storage_write_request(const storage_request_t *request)
             path = METER_SD_TELEMETRY_QUEUE_FILE;
             err = storage_wrap_payload(SYSTEM_RECORD_TELEMETRY_PENDING,
                                        "telemetry_pending", request->line,
-                                       wrapped, sizeof(wrapped));
+                                       wrapped, STORAGE_SERVICE_LINE_MAX);
             line = wrapped;
             break;
         case STORAGE_REQ_ALERT:
             path = METER_SD_ALERT_QUEUE_FILE;
             err = storage_wrap_payload(SYSTEM_RECORD_ALERT_PENDING,
                                        "alert_pending", request->line,
-                                       wrapped, sizeof(wrapped));
+                                       wrapped, STORAGE_SERVICE_LINE_MAX);
             line = wrapped;
             break;
         case STORAGE_REQ_EVENT:
@@ -504,6 +534,16 @@ static esp_err_t storage_write_request(const storage_request_t *request)
 
 static esp_err_t storage_extract_payload(const char *line, char *out, size_t out_len)
 {
+    /* New telemetry is already an immutable SenML packet; old wrapped
+     * queue entries remain readable after upgrading the firmware. */
+    if (line[0] == '[') {
+        const size_t len = strlen(line);
+        if ((len >= out_len) || (line[len - 1U] != ']')) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        memcpy(out, line, len + 1U);
+        return ESP_OK;
+    }
     const char marker[] = "\"payload\":";
     const char *begin = strstr(line, marker);
     const char *end = strrchr(line, '}');
@@ -525,17 +565,19 @@ static esp_err_t storage_extract_payload(const char *line, char *out, size_t out
 
 static esp_err_t storage_refresh_head(storage_record_kind_t kind)
 {
-    char line[STORAGE_SERVICE_LINE_MAX];
-    char payload[STORAGE_SERVICE_PAYLOAD_MAX];
+    char *const line = s_line_scratch;
+    char *const payload = s_payload_scratch;
     const char *path = storage_path_for_kind(kind);
     if (path == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    const esp_err_t err = sd_storage_peek_line(path, line, sizeof(line));
+    const esp_err_t err = sd_storage_peek_line(path, line,
+                                               STORAGE_SERVICE_LINE_MAX);
     bool available = false;
     bool invalid = (err == ESP_ERR_INVALID_SIZE);
     if (err == ESP_OK) {
-        available = (storage_extract_payload(line, payload, sizeof(payload)) == ESP_OK);
+        available = (storage_extract_payload(line, payload,
+                                             STORAGE_SERVICE_PAYLOAD_MAX) == ESP_OK);
         invalid = !available;
     } else if ((err != ESP_ERR_NOT_FOUND) && (err != ESP_ERR_INVALID_SIZE)) {
         return err;
@@ -580,8 +622,12 @@ static esp_err_t storage_ack(storage_record_kind_t kind)
     storage_lock();
     char *head = (kind == STORAGE_RECORD_ALERT) ? s_alert_head : s_telemetry_head;
     bool *claimed = (kind == STORAGE_RECORD_ALERT) ? &s_alert_claimed : &s_telemetry_claimed;
-    head[0] = '\0';
-    *claimed = false;
+    if ((err == ESP_OK) || (err == ESP_ERR_NOT_FOUND)) {
+        head[0] = '\0';
+        *claimed = false;
+    }
+    if (kind == STORAGE_RECORD_TELEMETRY) { s_telemetry_ack_queued = false; }
+    else { s_alert_ack_queued = false; }
     if ((err == ESP_OK) || (err == ESP_ERR_NOT_FOUND)) {
         if (kind == STORAGE_RECORD_ALERT) {
             s_snapshot.alerts_pending = (uint32_t)remaining;
@@ -611,14 +657,20 @@ static esp_err_t storage_write_history(void)
     if (err != ESP_OK) {
         return err;
     }
+    /* Separate measurement sequence: health events never create PDR gaps. */
+    base.sequence = node_health_data_generated_inc();
     const MeterData_t meter = meter_data_get_snapshot();
     char local[40];
-    char row[STORAGE_SERVICE_LINE_MAX];
+    char temp_cell[24] = {0};
+    char *const row = s_line_scratch;
     storage_format_local(&base, local, sizeof(local));
+    if (meter.temperature_valid != 0U) {
+        (void)snprintf(temp_cell, sizeof(temp_cell), "%.2f", (double)meter.temperature);
+    }
     const int n = snprintf(
-        row, sizeof(row),
+        row, STORAGE_SERVICE_LINE_MAX,
         "%u,%s,%lu,%lu,%lld,%s,%s,%lld,measurement,%.3f,%.4f,%.3f,"
-        "%.3f,%.3f,%.4f,%.3f,%.4f,%.2f,%lu",
+        "%.3f,%.3f,%.4f,%.3f,%.4f,%s,%lu",
         (unsigned)base.schema_version, mqtt_topics_device_id(),
         (unsigned long)base.boot_id, (unsigned long)base.sequence,
         (long long)base.timestamp_utc_s, local,
@@ -627,11 +679,32 @@ static esp_err_t storage_write_history(void)
         (double)meter.active_power_w, (double)meter.reactive_power_var,
         (double)meter.apparent_power_va, (double)meter.power_factor,
         (double)meter.frequency, (double)meter.energy_total_nvs_wh,
-        (double)meter.temperature, (unsigned long)meter.pq_status);
-    if ((n <= 0) || ((size_t)n >= sizeof(row))) {
+        temp_cell, (unsigned long)meter.pq_status);
+    if ((n <= 0) || ((size_t)n >= STORAGE_SERVICE_LINE_MAX)) {
         return ESP_ERR_INVALID_SIZE;
     }
-    return sd_storage_append_line(METER_SD_HISTORY_FILE, row);
+    err = sd_storage_append_line(METER_SD_HISTORY_FILE, row);
+    if (err != ESP_OK) { return err; }
+    char *const payload = s_payload_scratch;
+    err = data_serializer_build_senml_datos_record(&meter, &base,
+                                                   payload,
+                                                   STORAGE_SERVICE_PAYLOAD_MAX);
+    if (err != ESP_OK) { return err; }
+    /* The audit survives queue draining. These exact bytes go over MQTT. */
+    err = sd_storage_append_line(METER_SD_TELEMETRY_AUDIT_FILE, payload);
+    if (err != ESP_OK) { return err; }
+    if (METER_COMM_ENABLE) {
+        err = sd_storage_append_line(METER_SD_TELEMETRY_QUEUE_FILE, payload);
+        if (err == ESP_OK) {
+            storage_lock();
+            ++s_snapshot.telemetry_pending;
+            storage_unlock();
+        }
+    }
+    LOG_INFO(TAG, "measurement generated boot=%lu seq=%lu time_valid=%u queued=%u",
+             (unsigned long)base.boot_id, (unsigned long)base.sequence,
+             (unsigned)base.time_valid, (unsigned)(err == ESP_OK));
+    return err;
 }
 
 static void storage_process_request(const storage_request_t *request)
@@ -661,6 +734,12 @@ static void task_storage(void *arg)
     (void)arg;
     for (;;) {
         const int64_t now = storage_now_ms();
+        if ((s_last_stack_log_ms == 0) ||
+            ((now - s_last_stack_log_ms) >= STORAGE_STACK_LOG_PERIOD_MS)) {
+            LOG_INFO(TAG, "stack task_storage: %u unidades libres (minimo historico)",
+                     (unsigned)uxTaskGetStackHighWaterMark(NULL));
+            s_last_stack_log_ms = now;
+        }
         if (!sd_storage_is_mounted()) {
             if (now >= s_next_mount_ms) {
                 (void)storage_try_mount();
@@ -719,6 +798,8 @@ esp_err_t storage_service_start(void)
     if (!system_health_is_initialized()) {
         return ESP_ERR_INVALID_STATE;
     }
+    (void)data_serializer_init();
+    (void)node_health_init();
     s_snapshot_mutex = xSemaphoreCreateMutexStatic(&s_snapshot_mutex_buffer);
     s_normal_queue = xQueueCreateStatic(STORAGE_NORMAL_QUEUE_LEN,
                                         sizeof(storage_request_t),
@@ -734,6 +815,7 @@ esp_err_t storage_service_start(void)
     }
     (void)memset(&s_snapshot, 0, sizeof(s_snapshot));
     s_next_mount_ms = 0;
+    s_last_stack_log_ms = 0;
     s_task_handle = xTaskCreateStaticPinnedToCore(
         task_storage, "task_storage", TASK_STACK_STORAGE, NULL,
         TASK_PRIO_STORAGE, s_task_stack, &s_task_buffer, tskNO_AFFINITY);

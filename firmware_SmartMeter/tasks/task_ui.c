@@ -145,7 +145,7 @@ static void task_ui_execute_action(ui_action_t action)
                 uint8_t cal_st = task_calibration_get_status();
                 if ((cal_st & CALIB_STATUS_RUNNING) != 0U) {
                     task_ui_set_status("CAL RUNNING...");
-                } else if (task_calibration_start() == ESP_OK) {
+                } else if (task_manager_request_calibration(CALIB_REQUEST_FULL) == ESP_OK) {
                     task_ui_set_status("CAL STARTED");
                 } else {
                     task_ui_set_status("CAL FAIL");

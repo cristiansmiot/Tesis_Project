@@ -23,6 +23,7 @@ static StaticQueue_t s_alert_queue_buffer;
 static uint8_t s_alert_queue_storage[SYSTEM_ALERT_QUEUE_LEN * sizeof(system_event_t)];
 static QueueHandle_t s_alert_queue;
 
+#if METER_STORAGE_ENABLE
 static void sanitize_detail(const char *src, char *dst, size_t dst_len)
 {
     if ((dst == NULL) || (dst_len == 0U)) {
@@ -69,9 +70,14 @@ static void format_timestamp(int64_t epoch_utc_s,
     (void)strftime(utc, utc_len, "%Y-%m-%dT%H:%M:%SZ", &utc_tm);
     (void)strftime(local, local_len, "%Y-%m-%dT%H:%M:%S-05:00", &local_tm);
 }
+#endif
 
 static void persist_event(const system_event_t *event)
 {
+#if !METER_STORAGE_ENABLE
+    (void)event;
+    return;
+#else
     if (event == NULL) {
         return;
     }
@@ -115,10 +121,15 @@ static void persist_event(const system_event_t *event)
                      (unsigned long)event->sequence);
         }
     }
+#endif
 }
 
 static bool persist_alert(const system_event_t *event)
 {
+#if !METER_STORAGE_ENABLE
+    (void)event;
+    return false;
+#else
     if (event == NULL) {
         return false;
     }
@@ -128,11 +139,21 @@ static bool persist_alert(const system_event_t *event)
         return false;
     }
     return storage_service_submit_alert(payload) == ESP_OK;
+#endif
 }
 
 static void enqueue_alert(const system_event_t *event)
 {
-    if ((event == NULL) || (event->severity < SYSTEM_SEVERITY_WARNING)) {
+    if (event == NULL) {
+        return;
+    }
+    // Las recuperaciones informativas deben llegar al backend: alli cierran
+    // incidentes SIM_OFF/AC_LOST y conservan su fecha de finalizacion.
+    const bool resolves_fault = (event->transition == SYSTEM_EVENT_CLEARED) ||
+        (event->code == SYSTEM_EVENT_MODULE_READY) ||
+        (event->code == SYSTEM_EVENT_AC_RESTORED) ||
+        (event->code == SYSTEM_EVENT_TIME_SYNCED);
+    if ((event->severity < SYSTEM_SEVERITY_WARNING) && !resolves_fault) {
         return;
     }
     if (persist_alert(event)) {

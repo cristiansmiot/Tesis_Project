@@ -6,8 +6,8 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-#define STORAGE_SERVICE_PAYLOAD_MAX 768U
-#define STORAGE_SERVICE_LINE_MAX    1024U
+#define STORAGE_SERVICE_PAYLOAD_MAX 1536U
+#define STORAGE_SERVICE_LINE_MAX    2048U
 
 typedef enum {
     STORAGE_RECORD_HISTORY = 0,

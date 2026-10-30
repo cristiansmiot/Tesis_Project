@@ -112,6 +112,18 @@ Valores esperados:
 - calibracion exitosa en vivo: normalmente incluye `VALID|PERSISTED|LOADED` (`0x0E`)
 - reaplicacion de NVS valida: normalmente `0x0E`
 
+### 8.4 Corrida comparativa para caracterizacion
+
+La calibracion mSure valida una rutina interna y sus factores de ganancia; por si sola no demuestra exactitud contra un patron externo. Para la prueba de caracterizacion:
+
+1. Registrar identificador de firmware, carga, Unom real, frecuencia, referencia, AIGAIN/AVGAIN y estado `CAL` antes de calibrar. Tomar al menos 30 pares de lecturas estables de Vrms, Irms y potencia activa.
+2. Sin cambiar el montaje ni la carga, solicitar calibracion completa desde el menu ADE o con el comando MQTT `calibrate`. La orden debe generar `mSure done: ...` y, al terminar, `CAL` debe incluir `VALID`, `PERSISTED` y `LOADED` (`0x0E`). Si solo se solicita la tarea ya iniciada y no aparece `mSure done`, la calibracion no se ejecuto.
+3. Guardar AICC, AICERT, AVCC, AVCERT, AIGAIN y AVGAIN. Verificar `AICERT <= 3000 ppm`, `AVCERT <= 3000 ppm`, ausencia de errores y lectura repetida estable.
+4. Reiniciar sin borrar NVS. Confirmar el log `calibration loaded from NVS: ...` y que los registros AIGAIN/AVGAIN aplicados coincidan con el resultado guardado.
+5. Repetir los mismos 30 pares de lecturas y calcular errores frente al mismo patron. Reportar antes/despues con incertidumbre.
+
+El firmware de prueba queda configurado con `METER_VNOM_V=120 V`, correspondiente al montaje residencial previsto. Confirmar con la referencia, antes de energizar la carga, que la tension real de ensayo es compatible; si el banco usa otra tension nominal, ajustar y recompilar antes de iniciar. El valor define umbrales sag/swell. La conversion actual usa constantes predeterminadas de la API de la placa EV (`METER_USE_ADI_API_CC_DEFAULTS=1`); no cambiar a la ruta AN-1571 ni ajustar constantes manualmente durante esta corrida. La coincidencia `CAL=0x0E` demuestra estado de calibracion aceptado por firmware, no exactitud clase 1.
+
 ## 9. Prueba de exactitud (Sprint 2)
 
 Para cada nivel de carga (1, 2, 3 bombillos):

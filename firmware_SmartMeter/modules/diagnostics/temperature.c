@@ -92,15 +92,18 @@ esp_err_t temperature_read_internal(float *out_temp_c)
     }
 
     const int16_t temp_reg = (int16_t)raw_u16;
-    *out_temp_c = ((float)offset / 32.0f) - (((float)temp_reg * (float)gain) / 131072.0f);
-    if ((*out_temp_c < METER_TEMP_SANITY_MIN_C) || (*out_temp_c > METER_TEMP_SANITY_MAX_C)) {
+    const float candidate_c = ((float)offset / 32.0f) -
+        (((float)temp_reg * (float)gain) / 131072.0f);
+    if ((candidate_c < METER_TEMP_SANITY_MIN_C) ||
+        (candidate_c > METER_TEMP_SANITY_MAX_C)) {
         if (!s_warned_invalid_temp) {
-            LOG_WARN(TAG, "temperature out of sanity range: %.2fC", (double)*out_temp_c);
+            LOG_WARN(TAG, "temperature out of sanity range: %.2fC", (double)candidate_c);
             s_warned_invalid_temp = true;
         }
         return ESP_ERR_INVALID_RESPONSE;
     }
 
+    *out_temp_c = candidate_c;
     s_warned_read_fail = false;
     s_warned_invalid_trim = false;
     s_warned_invalid_temp = false;

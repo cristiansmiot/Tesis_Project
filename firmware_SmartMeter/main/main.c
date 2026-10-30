@@ -5,6 +5,7 @@
 #include "ade9153a_init.h"
 #include "ade9153a_spi.h"
 #include "apparent_power.h"
+#include "board_config.h"
 #include "conversion_constants.h"
 #include "current.h"
 #include "fault_handler.h"
@@ -18,10 +19,40 @@
 #include "temperature.h"
 #include "system_health.h"
 #include "voltage.h"
+#include "driver/gpio.h"
 #include "esp_err.h"
 #include "esp_system.h"
 
 static const char *TAG = "main";
+
+/**
+ * @brief Mantiene inactivos los perifericos antes de iniciar SPI2 compartido.
+ *
+ * ADE y microSD comparten señales, por lo que ambos CS deben partir en alto.
+ * La PCB debe aislar MISO_SD cuando SD_CS no esta activo.
+ */
+static esp_err_t main_prepare_spi_chip_selects(void)
+{
+    const gpio_config_t cs_cfg = {
+        .pin_bit_mask = (1ULL << SD_PIN_CS) | (1ULL << ADE9153A_PIN_CS),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&cs_cfg);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = gpio_set_level(SD_PIN_CS, 1);
+    if (err == ESP_OK) {
+        err = gpio_set_level(ADE9153A_PIN_CS, 1);
+    }
+    if (err == ESP_OK) {
+        LOG_INFO(TAG, "shared SPI devices idle: SD_CS=HIGH ADE_CS=HIGH");
+    }
+    return err;
+}
 
 /**
  * @brief Punto de entrada principal del firmware.
@@ -59,7 +90,10 @@ void app_main(void)
     } else {
         (void)system_health_mark_recovering(SYSTEM_MODULE_ADE,
                                             "ADE boot initialization");
-        const esp_err_t spi_err = ade9153a_spi_init();
+        esp_err_t spi_err = main_prepare_spi_chip_selects();
+        if (spi_err == ESP_OK) {
+            spi_err = ade9153a_spi_init();
+        }
         if (spi_err != ESP_OK) {
             LOG_ERROR(TAG, "ADE SPI init failed: %s", esp_err_to_name(spi_err));
         } else {

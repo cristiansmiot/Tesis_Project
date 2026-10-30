@@ -22,6 +22,7 @@ static uint32_t s_detected_baudrate;
 // completo (~22 s) tras caidas de MQTT.
 static uint32_t s_last_known_baud;
 static uint8_t s_health_fail_streak;
+static bool s_last_at_response_ok;
 static char s_runtime_apn[64];
 static char s_imei[20];        // 15 dígitos IMEI + '\0', leído con AT+GSN
 static const uint32_t k_probe_at_timeout_ms = 1500U;
@@ -238,17 +239,28 @@ static esp_err_t sim7080g_wait_sim_ready(uint32_t timeout_ms)
     return (last_err == ESP_OK) ? ESP_FAIL : last_err;
 }
 
-static bool sim7080g_response_pdp_ready_for_cid(const char *response, uint8_t cid)
+static int sim7080g_response_pdp_status_for_cid(const char *response, uint8_t cid)
 {
     if (response == NULL) {
-        return false;
+        return -1;
     }
 
-    char needle_spaced[32];
-    char needle_compact[32];
-    (void)snprintf(needle_spaced, sizeof(needle_spaced), "+CNACT: %u,1", (unsigned)cid);
-    (void)snprintf(needle_compact, sizeof(needle_compact), "+CNACT:%u,1", (unsigned)cid);
-    return (strstr(response, needle_spaced) != NULL) || (strstr(response, needle_compact) != NULL);
+    const char *line = response;
+    while ((line = strstr(line, "+CNACT:")) != NULL) {
+        int response_cid = -1;
+        int status = -1;
+        if (sscanf(line + strlen("+CNACT:"), " %d,%d", &response_cid, &status) == 2 &&
+            response_cid == (int)cid) {
+            return status;
+        }
+        line += strlen("+CNACT:");
+    }
+    return -1;
+}
+
+static bool sim7080g_response_pdp_ready_for_cid(const char *response, uint8_t cid)
+{
+    return sim7080g_response_pdp_status_for_cid(response, cid) == 1;
 }
 
 static bool sim7080g_response_attached(const char *response)
@@ -582,6 +594,7 @@ esp_err_t sim7080g_init(void)
                                               0U,
                                               k_probe_at_timeout_ms,
                                               1U);
+        s_last_at_response_ok = (err == ESP_OK);
         if (err == ESP_OK) {
             s_health_fail_streak = 0U;
             // Reaplica ATE0 por si el modem reinicio y volvio con echo activo.
@@ -613,6 +626,7 @@ esp_err_t sim7080g_init(void)
         s_health_fail_streak = 0U;
     }
 
+    s_last_at_response_ok = false;
     esp_err_t err = sim7080g_probe_modem();
     if (err != ESP_OK) {
         LOG_ERROR(TAG,
@@ -623,6 +637,7 @@ esp_err_t sim7080g_init(void)
         s_state = SIM7080G_STATE_ERROR;
         return err;
     }
+    s_last_at_response_ok = true;
     s_health_fail_streak = 0U;
 
     // Si el modem respondio en un baud distinto al configurado, persistirlo
@@ -846,20 +861,56 @@ esp_err_t sim7080g_cycle_pdp(void)
 {
     char cmd[64];
     char response[128];
+    const uint8_t cid = (uint8_t)METER_SIM7080G_PDP_CID;
 
     // Desactiva PDP para forzar reset del stack TCP del modem.
-    // Necesario cuando AT+SMDISC falla con "operation not allowed":
-    // el SIM7080G tiene la FSM MQTT atascada en estado conectando y
-    // solo un ciclo PDP libera la sesion TCP subyacente.
-    (void)snprintf(cmd, sizeof(cmd), AT_CNACT_OFF_FMT, (unsigned)METER_SIM7080G_PDP_CID);
+    // El SIM7080G puede conservar el socket TCP aunque SMSTATE indique 0.
+    // No damos por hecho que CNACT=0 tuvo efecto: verificamos el estado antes
+    // de reactivar, pues activar mientras sigue arriba no reinicia el socket.
+    (void)snprintf(cmd, sizeof(cmd), AT_CNACT_OFF_FMT, (unsigned)cid);
     response[0] = '\0';
-    (void)sim7080g_hal_send_cmd(cmd, NULL, response, sizeof(response), 3000U, 1U);
-    LOG_INFO(TAG, "PDP cycle deactivate. resp=%s", response);
+    const esp_err_t deactivate_err = sim7080g_hal_send_cmd(cmd, NULL, response,
+                                                            sizeof(response), 5000U, 0U);
+    LOG_INFO(TAG, "PDP cycle deactivate cmd=%s resp=%s",
+             esp_err_to_name(deactivate_err), response);
 
-    vTaskDelay(pdMS_TO_TICKS(2000U));
+    bool deactivated = false;
+    esp_err_t query_err = ESP_OK;
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(12000U);
+    do {
+        response[0] = '\0';
+        query_err = sim7080g_hal_send_cmd(AT_CNACT_QUERY, NULL, response,
+                                          sizeof(response), 1500U, 0U);
+        const int status = (query_err == ESP_OK)
+                               ? sim7080g_response_pdp_status_for_cid(response, cid)
+                               : -1;
+        if (status == 0) {
+            deactivated = true;
+            LOG_INFO(TAG, "PDP cycle confirmed inactive cid=%u", (unsigned)cid);
+            break;
+        }
+        if (status >= 0) {
+            LOG_INFO(TAG, "PDP cycle waiting cid=%u status=%d", (unsigned)cid, status);
+        } else {
+            LOG_WARN(TAG, "PDP cycle status unavailable err=%s resp=%s",
+                     esp_err_to_name(query_err), response);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500U));
+    } while ((xTaskGetTickCount() - start) < timeout_ticks);
+
+    if (!deactivated) {
+        const esp_err_t err = (query_err != ESP_OK) ? query_err : ESP_ERR_TIMEOUT;
+        LOG_ERROR(TAG, "PDP cycle aborted: cid=%u did not confirm inactive",
+                  (unsigned)cid);
+        return err;
+    }
 
     s_state = (uint8_t)(s_state & ((uint8_t)~SIM7080G_STATE_PDP_READY));
-    const esp_err_t err = sim7080g_activate_pdp_cid((uint8_t)METER_SIM7080G_PDP_CID);
+    // Permite al stack IP/MQTT del modem liberar el transporte antes de
+    // abrir un contexto nuevo.
+    vTaskDelay(pdMS_TO_TICKS(2000U));
+    const esp_err_t err = sim7080g_activate_pdp_cid(cid);
     if (err == ESP_OK) {
         s_state = (uint8_t)(s_state | SIM7080G_STATE_PDP_READY);
         LOG_INFO(TAG, "PDP cycle reactivate OK");
@@ -953,6 +1004,11 @@ bool sim7080g_is_pdp_ready(void)
     return (s_state & SIM7080G_STATE_PDP_READY) != 0U;
 }
 
+bool sim7080g_last_at_response_ok(void)
+{
+    return s_last_at_response_ok;
+}
+
 void sim7080g_mark_modem_unready(void)
 {
     /* Flush UART RX buffer instead of full deinit to avoid spinlock
@@ -963,6 +1019,7 @@ void sim7080g_mark_modem_unready(void)
     s_state = 0U;
     s_detected_baudrate = 0U;
     s_health_fail_streak = 0U;
+    s_last_at_response_ok = false;
     s_runtime_apn[0] = '\0';
 }
 

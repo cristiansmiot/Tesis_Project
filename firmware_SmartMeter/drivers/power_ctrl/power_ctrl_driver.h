@@ -10,7 +10,8 @@
  * Integracion prevista:
  *   - task_power_mgmt will call power_ctrl_driver_init.
  *   - Flujo de datos: meter_data_get_snapshot() -> MeterData_t
- * Pines reservados en board_config.h: BATT_ADC=4 POWER_DETECT=5 BACKUP_ENABLE=6
+ * No controla el PWRKEY del SIM7080G. GPIO4 pertenece exclusivamente al
+ * controlador drivers/sim7080g/sim7080g_power.
  */
 
 #include "esp_err.h"

@@ -87,6 +87,13 @@ bool sim7080g_is_network_ready(void);
 bool sim7080g_is_pdp_ready(void);
 
 /**
+ * Indica si el ultimo intento de inicializacion obtuvo alguna respuesta AT.
+ * Permite distinguir un modem apagado/sin UART de errores posteriores como
+ * SIM no lista, falta de servicio o PDP caido.
+ */
+bool sim7080g_last_at_response_ok(void);
+
+/**
  * @brief Fuerza reset de estado interno modem/UART para re-probe completo.
  */
 void sim7080g_mark_modem_unready(void);

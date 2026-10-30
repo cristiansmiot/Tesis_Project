@@ -41,19 +41,22 @@ static esp_err_t voltage_read_avrms_raw_filtered(uint32_t *raw_out)
     }
 
     // Retry corto para amortiguar lecturas espurias intermitentes del bus.
+    esp_err_t last_err = ESP_ERR_INVALID_RESPONSE;
     for (uint8_t attempt = 0U; attempt < 2U; ++attempt) {
         uint32_t raw_u32 = 0U;
         const esp_err_t err = ade9153a_read_reg32(ADE9153A_REG_AVRMS, &raw_u32);
         if (err != ESP_OK) {
-            return err;
+            last_err = err;
+            continue;
         }
         if (voltage_avrms_raw_is_valid(raw_u32)) {
             *raw_out = raw_u32;
             return ESP_OK;
         }
+        last_err = ESP_ERR_INVALID_RESPONSE;
     }
 
-    return ESP_ERR_INVALID_RESPONSE;
+    return last_err;
 }
 
 static esp_err_t voltage_read_aperiod_raw(uint32_t *raw_out)
@@ -87,11 +90,14 @@ esp_err_t voltage_init(float target_avcc)
  * @brief Lee AVRMS y lo convierte a volts.
  * @return Voltaje RMS en volts.
  */
-float voltage_get_vrms(void)
+esp_err_t voltage_read_vrms(float *out_vrms)
 {
+    if (out_vrms == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (!s_initialized) {
         LOG_WARN(TAG, "voltage module not initialized");
-        return 0.0f;
+        return ESP_ERR_INVALID_STATE;
     }
 
 #if !METER_VHEADROOM_VERIFIED && !METER_USE_ADI_API_CC_DEFAULTS
@@ -99,7 +105,7 @@ float voltage_get_vrms(void)
         LOG_WARN(TAG, "VHEADROOM unverified and ADI defaults disabled - VRMS disabled (returning 0.0f)");
         s_warned_vrms_unverified = true;
     }
-    return 0.0f;
+    return ESP_ERR_INVALID_STATE;
 #else
     uint32_t raw_u32 = 0U;
     const esp_err_t err = voltage_read_avrms_raw_filtered(&raw_u32);
@@ -108,16 +114,24 @@ float voltage_get_vrms(void)
             LOG_WARN(TAG, "AVRMS invalid raw/plausibility - VRMS forced to 0.0V");
             s_warned_vrms_invalid_raw = true;
         }
-        return 0.0f;
+        return err;
     }
     if (err != ESP_OK) {
         LOG_WARN(TAG, "AVRMS read failed");
-        return 0.0f;
+        return err;
     }
 
     // AVRMS [V] = crudo * TARGET_AVCC[nV/code] * 1e-9
-    return voltage_avrms_raw_to_vrms(raw_u32);
+    *out_vrms = voltage_avrms_raw_to_vrms(raw_u32);
+    return ESP_OK;
 #endif
+}
+
+float voltage_get_vrms(void)
+{
+    float vrms = 0.0f;
+    (void)voltage_read_vrms(&vrms);
+    return vrms;
 }
 
 /**

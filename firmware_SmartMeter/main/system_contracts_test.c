@@ -1,8 +1,14 @@
 #include "system_contracts_test.h"
 
 #include <sys/time.h>
+#include <string.h>
+#include <math.h>
 
 #include "ds3231.h"
+#include "sim7080g_radio.h"
+#include "data_serializer.h"
+#include "node_health.h"
+#include "storage_service.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "logger.h"
@@ -44,6 +50,20 @@ static void concurrent_producer(void *arg)
 
 bool system_contracts_test_run(void)
 {
+    sim7080g_radio_t radio;
+    TEST_CHECK(sim7080g_radio_parse_cpsi(
+        "\r\n+CPSI: LTE NB-IOT,Online,460-11,0x5AE1,187212754,82,EUTRAN-BAND5,2506,0,0,-7,-115,-110,13\r\nOK\r\n", &radio),
+        "CPSI manual example rejected");
+    TEST_CHECK(radio.valid && radio.rsrp_dbm == -115.0f &&
+        radio.rsrq_db == -7.0f && radio.sinr_db == 6.0f, "CPSI units/formula");
+    TEST_CHECK(!sim7080g_radio_parse_cpsi("+CPSI: NO SERVICE,Online\r\nOK", &radio)
+        && !radio.valid, "CPSI no-service reused old values");
+    TEST_CHECK(!sim7080g_radio_parse_cpsi(
+        "+CPSI: LTE CAT-M1,Online,732-123,1,2,3,4,5,0,0, ,-115,-110,13", &radio),
+        "CPSI empty value accepted");
+    TEST_CHECK(!sim7080g_radio_parse_cpsi(
+        "+CPSI: LTE CAT-M1,Online,732-123,1,2,3,4,5,0,0,-70,-1150,-1100,130", &radio),
+        "CPSI undocumented scaled values accepted");
     struct tm epoch_test = {
         .tm_year = 120,
         .tm_mon = 0,
@@ -204,6 +224,30 @@ bool system_contracts_test_run(void)
                (health.active_occurrences == 50U),
                "concurrent counters corrupted");
 
-    LOG_INFO(TAG, "PASS states dedup clear time calendar overflow priority concurrency");
+    TEST_CHECK(data_serializer_init() == ESP_OK, "serializer init");
+    const MeterData_t meter = {.vrms = 120.0f, .irms_a = 1.0f};
+    const system_record_base_t record = {.boot_id = UINT32_MAX, .sequence = 42,
+        .uptime_ms = INT64_C(99999999), .time_valid = false};
+    static char packet[STORAGE_SERVICE_PAYLOAD_MAX];
+    static char replay[STORAGE_SERVICE_PAYLOAD_MAX];
+    TEST_CHECK(data_serializer_build_senml_datos_record(&meter, &record,
+        packet, sizeof(packet)) == ESP_OK, "trace packet truncated");
+    TEST_CHECK(data_serializer_build_senml_datos_record(&meter, &record,
+        replay, sizeof(replay)) == ESP_OK && strcmp(packet, replay) == 0,
+        "replay changed measurement identity");
+    TEST_CHECK(strstr(packet, "\"n\":\"boot_id\",\"v\":4294967295") &&
+        strstr(packet, "\"n\":\"seq\",\"v\":42") &&
+        strstr(packet, "\"n\":\"time_valid\",\"vb\":false") &&
+        strstr(packet, "\"n\":\"fw\",\"vs\":"), "trace fields missing");
+    (void)node_health_init();
+    for (unsigned i = 0; i < 3; ++i) { node_health_mqtt_success_inc(); }
+    for (unsigned i = 0; i < 2; ++i) { node_health_msg_tx_inc(); }
+    TEST_CHECK(data_serializer_build_senml_estado(&meter, false, false, false,
+        packet, sizeof(packet)) == ESP_OK, "status trace counters truncated");
+    TEST_CHECK(strstr(packet, "\"n\":\"mqtt_sessions_ok\",\"v\":3") &&
+        strstr(packet, "\"n\":\"data_publish_ok\",\"v\":2") &&
+        strstr(packet, "\"n\":\"reconnect_count\",\"v\":2"),
+        "status confused sessions with published data");
+    LOG_INFO(TAG, "PASS states dedup clear time calendar overflow priority concurrency CPSI trace");
     return true;
 }

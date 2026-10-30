@@ -621,7 +621,8 @@ const char *system_event_code_name(system_event_code_t code)
         "TIME_SYNC_FAILED", "SD_LOW_SPACE", "SD_FULL", "DATA_LOSS",
         "SIM_NO_AT", "CELL_NO_SERVICE", "PDP_DOWN", "MQTT_DISCONNECTED",
         "PQ_SAG", "PQ_SWELL", "PQ_FREQ_OOR", "OVERTEMP", "SPI_ERROR",
-        "ADC_ERROR", "RTC_BACKUP_LOST"
+        "ADC_ERROR", "RTC_BACKUP_LOST", "SIM_OFF", "AC_LOST",
+        "AC_RESTORED"
     };
     return ((code >= SYSTEM_EVENT_CODE_NONE) && (code < SYSTEM_EVENT_CODE_COUNT))
                ? names[code] : "UNKNOWN";

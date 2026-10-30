@@ -30,6 +30,11 @@ Una fecha fuera de 2020-01-01 a 2099-12-31 nunca se acepta ni se inventa.
 El firmware reintenta hora celular cada 60 segundos mientras sea inválida y
 renueva la sincronización cada 6 horas cuando ya es válida.
 
+El backend genera `sync_time:<epoch_utc>` usando su reloj UTC en el instante de
+publicar el comando. El firmware valida el rango completo y lo entrega como
+fuente `REMOTE`; `task_time` es quien actualiza el ESP32 y el DS3231. El comando
+legacy `sync_time` se conserva solamente para volver a consultar `AT+CCLK`.
+
 ## OSF y escritura segura
 
 La bandera Oscillator Stop Flag no se borra durante `init`. Solo se limpia al

@@ -1,6 +1,8 @@
 #include "task_communication.h"
 
+#include <errno.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "ade9153a_init.h"
@@ -12,11 +14,13 @@
 #include "node_health.h"
 #include "storage_service.h"
 #include "task_calibration.h"   // task_calibration_get_status(), CALIB_STATUS_*
+#include "task_manager.h"       // task_manager_request_calibration(), CALIB_REQUEST_*
 #include "task_monitor.h"
 #include "../modules/communication/mqtt_client.h"
 #include "../modules/communication/mqtt_topics.h"
 #include "rtos_app_config.h"
 #include "sim7080g_init.h"
+#include "sim7080g_power.h"
 #include "system_event_dispatcher.h"
 #include "system_health.h"
 #include "time_service.h"
@@ -26,6 +30,8 @@ static const char *TAG = "task_communication";
 static TaskHandle_t s_task_handle;
 static bool s_subscribed;
 static volatile bool s_force_estado; // set by "status" cmd → publica /estado inmediato
+
+#define REMOTE_TIME_CMD_PREFIX "sync_time:"
 
 /**
  * Sincroniza el reloj del sistema y el RTC DS3231 con la hora de red del
@@ -68,23 +74,64 @@ static esp_err_t task_communication_apply_network_time(void)
     return ESP_OK;
 }
 
-static void task_communication_publish_persisted(storage_record_kind_t kind,
+/** Acepta exclusivamente sync_time:<epoch_utc> generado por el backend. */
+static esp_err_t task_communication_apply_remote_time(const char *cmd)
+{
+    if (cmd == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const size_t prefix_len = strlen(REMOTE_TIME_CMD_PREFIX);
+    if (strncmp(cmd, REMOTE_TIME_CMD_PREFIX, prefix_len) != 0) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    const char *value = cmd + prefix_len;
+    char *end = NULL;
+    errno = 0;
+    const long long parsed = strtoll(value, &end, 10);
+    if ((errno != 0) || (end == value) || (*end != '\0') ||
+        !system_time_epoch_is_valid((int64_t)parsed)) {
+        LOG_WARN(TAG, "epoch remoto rechazado: %s", value);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const esp_err_t err = time_service_submit_sync(
+        SYSTEM_TIME_SOURCE_REMOTE, (int64_t)parsed);
+    if (err == ESP_OK) {
+        LOG_INFO(TAG, "epoch remoto aceptado: %lld", parsed);
+        s_force_estado = true;
+    } else {
+        LOG_WARN(TAG, "no se pudo encolar epoch remoto: %s",
+                 esp_err_to_name(err));
+    }
+    return err;
+}
+
+static esp_err_t task_communication_publish_persisted(storage_record_kind_t kind,
                                                  const char *topic,
                                                  int qos)
 {
-    char line[STORAGE_SERVICE_LINE_MAX];
+    char line[STORAGE_SERVICE_PAYLOAD_MAX];
     if (storage_service_peek_pending(kind, line, sizeof(line)) != ESP_OK) {
-        return;
+        return ESP_ERR_NOT_FOUND;
     }
+    if (kind == STORAGE_RECORD_TELEMETRY) { node_health_data_publish_attempt_inc(); }
     const esp_err_t err = mqtt_client_publish(topic, line, qos, 0);
     if (err == ESP_OK) {
-        (void)storage_service_ack_pending(kind);
+        if (kind == STORAGE_RECORD_TELEMETRY) { node_health_msg_tx_inc(); }
+        const esp_err_t ack_err = storage_service_ack_pending(kind);
+        if (ack_err != ESP_OK) {
+            LOG_WARN(TAG, "published record remains queued: SD ack err=%s",
+                     esp_err_to_name(ack_err));
+            return ack_err;
+        }
     }
+    return err;
 }
 
 static void task_communication_drain_persisted_alerts(void)
 {
-    task_communication_publish_persisted(STORAGE_RECORD_ALERT,
+    (void)task_communication_publish_persisted(STORAGE_RECORD_ALERT,
                                          mqtt_topics_alerta(), 1);
 }
 
@@ -118,39 +165,41 @@ static void task_communication_publish_system_alerts(char *payload,
     }
 }
 
-/**
- * Guarda la medicion actual en el backlog de la SD cuando MQTT no esta
- * disponible. Limitada a una muestra por METER_COMM_PUBLISH_PERIOD_MS para
- * que los reintentos rapidos (backoff de 2-12 s) no inflen el archivo con
- * lecturas casi identicas. Requiere hora de sistema valida: una medicion
- * sin timestamp real llegaria al backend con la hora equivocada.
- */
-static void task_communication_backlog_store(void)
+/* Degraded operation without SD: keep live service, but report that the
+ * complete local audit is unavailable. Retries reuse the same identity. */
+static esp_err_t task_communication_publish_fallback(void)
 {
-    static TickType_t s_last_store_tick;
-
-    const time_t now = system_time_is_valid() ? time(NULL) : (time_t)0;
+    static TickType_t last_tick;
+    static bool generated;
+    static bool pending;
+    static char payload[STORAGE_SERVICE_PAYLOAD_MAX];
     const TickType_t tick = xTaskGetTickCount();
-    if ((s_last_store_tick != 0U) &&
-        ((tick - s_last_store_tick) < pdMS_TO_TICKS(METER_COMM_PUBLISH_PERIOD_MS))) {
-        return;
+    if (!pending) {
+        if (generated && ((tick - last_tick) < pdMS_TO_TICKS(METER_COMM_PUBLISH_PERIOD_MS))) {
+            return ESP_ERR_NOT_FOUND;
+        }
+        const MeterData_t snap = meter_data_get_snapshot();
+        const esp_err_t err = data_serializer_build_senml_datos(&snap, payload, sizeof(payload));
+        if (err != ESP_OK) { return err; }
+        last_tick = tick;
+        generated = true;
+        pending = true;
+        LOG_WARN(TAG, "SD unavailable: live measurement has no durable audit");
     }
-
-    const MeterData_t snap = meter_data_get_snapshot();
-    char line[768];
-    if (data_serializer_build_senml_datos_at(&snap, (double)now,
-                                             line, sizeof(line)) != ESP_OK) {
-        return;
+    node_health_data_publish_attempt_inc();
+    const esp_err_t err = mqtt_client_publish(mqtt_topics_datos(), payload,
+        METER_MQTT_PUBLISH_QOS, METER_MQTT_PUBLISH_RETAIN);
+    if (err == ESP_OK) {
+        node_health_msg_tx_inc();
+        pending = false;
     }
-    if (storage_service_submit_telemetry(line) == ESP_OK) {
-        s_last_store_tick = tick;
-        LOG_INFO(TAG, "medicion guardada en backlog SD (MQTT caido)");
-    }
+    return err;
 }
 
 /**
  * @brief Procesa comando recibido via MQTT desde el dashboard.
- * Comandos: reset, calibrate, probe, status, relay_off, relay_on, sync_time.
+ * Comandos: reset, calibrate, probe, status, relay_off, relay_on,
+ * sync_time (CCLK legacy) y sync_time:<epoch_utc> (fuente REMOTE).
  */
 static void task_communication_process_cmd(const char *cmd)
 {
@@ -163,10 +212,10 @@ static void task_communication_process_cmd(const char *cmd)
         const uint8_t cal_st = task_calibration_get_status();
         if ((cal_st & CALIB_STATUS_RUNNING) != 0U) {
             LOG_WARN(TAG, "calibration already running");
-        } else if (task_calibration_start() == ESP_OK) {
+        } else if (task_manager_request_calibration(CALIB_REQUEST_FULL) == ESP_OK) {
             LOG_INFO(TAG, "calibration started via remote cmd");
         } else {
-            LOG_ERROR(TAG, "calibration start failed via remote cmd");
+            LOG_ERROR(TAG, "calibration request failed via remote cmd");
         }
     } else if (strcmp(cmd, "probe") == 0) {
         const esp_err_t err = ade9153a_recover(ADE9153A_RECOVERY_ACTION_PROBE);
@@ -188,6 +237,9 @@ static void task_communication_process_cmd(const char *cmd)
     } else if (strcmp(cmd, "relay_on") == 0) {
         // TODO: cerrar GPIO del rele de suministro cuando el hardware este cableado
         LOG_WARN(TAG, "relay_on: GPIO relay not wired yet");
+    } else if (strncmp(cmd, REMOTE_TIME_CMD_PREFIX,
+                       strlen(REMOTE_TIME_CMD_PREFIX)) == 0) {
+        (void)task_communication_apply_remote_time(cmd);
     } else if (strcmp(cmd, "sync_time") == 0) {
         // El comando llego por MQTT, asi que la sesion celular esta viva
         // y AT+CCLK responde con la hora de red.
@@ -221,11 +273,20 @@ static void task_communication(void *pvParameters)
 
     (void)node_health_init();
 
+    const esp_err_t power_init_err = sim7080g_power_init();
+    if (power_init_err != ESP_OK) {
+        LOG_ERROR(TAG, "PWRKEY GPIO init failed: %s",
+                  esp_err_to_name(power_init_err));
+        (void)system_health_report_failure(
+            SYSTEM_MODULE_SIM_MODEM, SYSTEM_EVENT_INIT_FAILED,
+            SYSTEM_SEVERITY_WARNING, power_init_err,
+            "SIM7080G PWRKEY GPIO init failed");
+    }
+
     bool mqtt_profile_ready = false;
     bool mqtt_session_ready = false;
-    // 768 B: cabe /datos (~350 B), /estado (~540 B con IMEI) y /alerta (~300 B).
-    // Antes era 512 y /estado llegaba a truncarse (len=535).
-    char payload[768];
+    // Includes trace metadata, independent counters and CPSI radio metrics.
+    char payload[STORAGE_SERVICE_PAYLOAD_MAX];
     // Snapshot compartido entre todos los topics del ciclo actual.
     MeterData_t snap = {0};
     // Timer para publicacion periodica del topic /estado (salud del nodo).
@@ -233,6 +294,7 @@ static void task_communication(void *pvParameters)
     TickType_t last_time_sync_tick = 0U;
     // Backoff progresivo para reintentos de conexion.
     uint8_t consecutive_failures = 0U;
+    s_force_estado = true;
 
     (void)system_health_mark_recovering(SYSTEM_MODULE_SIM_MODEM,
                                         "modem startup");
@@ -247,21 +309,53 @@ static void task_communication(void *pvParameters)
         if (!mqtt_session_ready) {
             const esp_err_t modem_err = sim7080g_init();
             if (modem_err != ESP_OK) {
-                LOG_WARN(TAG, "modem init failed - retry");
-                (void)system_health_report_failure(
-                    SYSTEM_MODULE_SIM_MODEM, SYSTEM_EVENT_SIM_NO_AT,
-                    SYSTEM_SEVERITY_WARNING, modem_err,
-                    "SIM7080G did not answer AT");
+                if (!sim7080g_last_at_response_ok()) {
+                    LOG_WARN(TAG, "modem sin respuesta AT - retry/power policy");
+                    (void)system_health_report_failure(
+                        SYSTEM_MODULE_SIM_MODEM, SYSTEM_EVENT_SIM_NO_AT,
+                        SYSTEM_SEVERITY_WARNING, modem_err,
+                        "SIM7080G did not answer AT");
+
+                    bool pwrkey_pulsed = false;
+                    const esp_err_t power_err =
+                        sim7080g_power_handle_no_at(&pwrkey_pulsed);
+                    if (pwrkey_pulsed) {
+                        (void)system_health_mark_recovering(
+                            SYSTEM_MODULE_SIM_MODEM,
+                            "PWRKEY recovery after repeated NO_AT");
+                        (void)system_health_report_occurrence(
+                            SYSTEM_MODULE_SIM_MODEM, SYSTEM_EVENT_SIM_OFF,
+                            SYSTEM_SEVERITY_WARNING, ESP_ERR_INVALID_STATE,
+                            "SIM suspected off; PWRKEY pulse applied");
+                        sim7080g_mark_modem_unready();
+                        mqtt_session_ready = false;
+                        s_subscribed = false;
+                    } else if ((power_err != ESP_ERR_NOT_FINISHED) &&
+                               (power_err != ESP_ERR_TIMEOUT)) {
+                        LOG_ERROR(TAG, "PWRKEY recovery failed: %s",
+                                  esp_err_to_name(power_err));
+                    }
+                } else {
+                    /* AT respondio: no tocar PWRKEY por fallas de SIM/config. */
+                    sim7080g_power_note_at_ready();
+                    (void)system_health_report_ok(
+                        SYSTEM_MODULE_SIM_MODEM, "SIM7080G AT ready");
+                    (void)system_health_report_failure(
+                        SYSTEM_MODULE_SIM_MODEM, SYSTEM_EVENT_INIT_FAILED,
+                        SYSTEM_SEVERITY_WARNING, modem_err,
+                        "AT ready; modem setup incomplete");
+                    LOG_WARN(TAG, "AT responde pero init del modem fallo - sin PWRKEY");
+                }
                 mqtt_profile_ready = false;
                 fast_retry = true;
                 goto cycle_delay;
             }
+            sim7080g_power_note_at_ready();
             (void)system_health_report_ok(SYSTEM_MODULE_SIM_MODEM,
                                           "SIM7080G AT ready");
 
             // Identidad del nodo (MAC eFuse) lista antes de configurar el
-            // perfil MQTT. Idempotente: normalmente ya la fijo la UI o el
-            // getter del LWT durante el arranque.
+            // perfil MQTT. Idempotente: normalmente ya la fijo la UI.
             (void)mqtt_topics_init();
 
             if (!sim7080g_is_pdp_ready()) {
@@ -271,10 +365,14 @@ static void task_communication(void *pvParameters)
                 const esp_err_t network_err = sim7080g_recover_network();
                 if (network_err != ESP_OK) {
                     LOG_WARN(TAG, "network recovery failed");
+                    const bool registered = sim7080g_is_network_ready();
                     (void)system_health_report_failure(
-                        SYSTEM_MODULE_CELLULAR, SYSTEM_EVENT_CELL_NO_SERVICE,
+                        SYSTEM_MODULE_CELLULAR,
+                        registered ? SYSTEM_EVENT_PDP_DOWN
+                                   : SYSTEM_EVENT_CELL_NO_SERVICE,
                         SYSTEM_SEVERITY_WARNING, network_err,
-                        "cellular network recovery failed");
+                        registered ? "cellular registered; PDP activation failed"
+                                   : "cellular network registration failed");
                     mqtt_profile_ready = false;
                     fast_retry = true;
                     goto cycle_delay;
@@ -321,22 +419,6 @@ static void task_communication(void *pvParameters)
             (void)system_health_report_ok(SYSTEM_MODULE_MQTT,
                                           "MQTT session ready");
 
-            // ?????? /conexion: publicar "online" al establecer sesion ?????????????????????????????????
-            // retain=1 / QoS=1: el broker retiene el ultimo estado conocido
-            // para suscriptores que se conecten despues.
-            // El broker publica "offline" (LWT) si el nodo cae sin SMDISC.
-            {
-                const esp_err_t con_err = mqtt_client_publish(
-                    mqtt_topics_conexion(), "online",
-                    METER_MQTT_LWT_QOS, METER_MQTT_LWT_RETAIN);
-                if (con_err != ESP_OK) {
-                    LOG_WARN(TAG, "/conexion online publish failed: %s",
-                             esp_err_to_name(con_err));
-                } else {
-                    LOG_INFO(TAG, "/conexion online publicado");
-                }
-            }
-
             // Sincronizar fecha/hora de red tras establecer sesion
             // (sistema + RTC DS3231; habilita el timestamping del backlog).
             (void)task_communication_apply_network_time();
@@ -373,18 +455,14 @@ static void task_communication(void *pvParameters)
         snap = meter_data_get_snapshot();
 
         // ?????? /datos: mediciones electricas en SenML RFC 8428 ???????????????????????????????????????????????????
-        if (data_serializer_build_senml_datos(&snap, payload, sizeof(payload)) != ESP_OK) {
-            LOG_WARN(TAG, "SenML /datos serialization failed");
-            fast_retry = true;
-            goto cycle_delay;
-        }
-
         {
-            const esp_err_t pub_err = mqtt_client_publish(mqtt_topics_datos(),
-                                                          payload,
-                                                          METER_MQTT_PUBLISH_QOS,
-                                                          METER_MQTT_PUBLISH_RETAIN);
-            if (pub_err != ESP_OK) {
+            storage_service_snapshot_t sd = {0};
+            (void)storage_service_get_snapshot(&sd);
+            const esp_err_t pub_err = sd.mounted
+                ? task_communication_publish_persisted(STORAGE_RECORD_TELEMETRY,
+                    mqtt_topics_datos(), METER_MQTT_PUBLISH_QOS)
+                : task_communication_publish_fallback();
+            if ((pub_err != ESP_OK) && (pub_err != ESP_ERR_NOT_FOUND)) {
                 LOG_WARN(TAG, "/datos publish failed err=%s - forcing recovery",
                          esp_err_to_name(pub_err));
                 (void)system_health_report_failure(
@@ -411,10 +489,14 @@ static void task_communication(void *pvParameters)
             }
         }
 
-        node_health_msg_tx_inc();
-        (void)system_health_report_ok(SYSTEM_MODULE_MQTT,
-                                      "telemetry publish successful");
-        LOG_INFO(TAG, "/datos SenML publicado topic=%s", mqtt_topics_datos());
+        (void)system_health_report_ok(
+            SYSTEM_MODULE_MQTT,
+#if METER_STORAGE_ENABLE
+            "MQTT ready; telemetry storage path active"
+#else
+            "MQTT ready; live telemetry without SD"
+#endif
+        );
 
         // Alertas de salud antes del backlog de telemetria para reducir
         // latencia de fallas y recuperaciones.
@@ -423,7 +505,7 @@ static void task_communication(void *pvParameters)
 
         // ── Drenar backlog SD acumulado durante caidas de MQTT ───────────
         // Lotes pequenos por ciclo para no retrasar la telemetria en vivo.
-        task_communication_publish_persisted(STORAGE_RECORD_TELEMETRY,
+        (void)task_communication_publish_persisted(STORAGE_RECORD_TELEMETRY,
                                              mqtt_topics_datos(),
                                              METER_MQTT_PUBLISH_QOS);
 
@@ -467,9 +549,10 @@ static void task_communication(void *pvParameters)
                                                        cal_ok,
                                                        payload,
                                                        sizeof(payload)) == ESP_OK) {
+                    LOG_INFO(TAG, "/estado preparado bytes=%u", (unsigned)strlen(payload));
                     const esp_err_t st_err = mqtt_client_publish(
                         mqtt_topics_estado(), payload,
-                        METER_MQTT_LWT_QOS, METER_MQTT_LWT_RETAIN);
+                        METER_MQTT_STATUS_QOS, METER_MQTT_STATUS_RETAIN);
                     if (st_err != ESP_OK) {
                         LOG_WARN(TAG, "/estado publish failed: %s", esp_err_to_name(st_err));
                     } else {
@@ -482,8 +565,8 @@ static void task_communication(void *pvParameters)
 
 cycle_delay:
         if (fast_retry) {
-            // Sin MQTT: preservar la medicion en SD para entrega diferida.
-            task_communication_backlog_store();
+            // Storage owns periodic acquisition and durable queue, even while
+            // this task is blocked in modem registration or recovery.
             if (consecutive_failures < UINT8_MAX) {
                 ++consecutive_failures;
             }
@@ -504,11 +587,28 @@ cycle_delay:
             const TickType_t period_ticks = pdMS_TO_TICKS(METER_COMM_PUBLISH_PERIOD_MS);
             const TickType_t hb_ticks = pdMS_TO_TICKS(METER_COMM_HEARTBEAT_INTERVAL_MS);
             const TickType_t start_tick = xTaskGetTickCount();
+            TickType_t last_hb_tick = start_tick;
             while ((xTaskGetTickCount() - start_tick) < period_ticks) {
                 const TickType_t remaining = period_ticks - (xTaskGetTickCount() - start_tick);
-                const TickType_t sleep = (remaining < hb_ticks) ? remaining : hb_ticks;
+                const TickType_t poll_ticks = pdMS_TO_TICKS(1000U);
+                const TickType_t sleep = (remaining < poll_ticks) ? remaining : poll_ticks;
                 vTaskDelay(sleep);
                 task_monitor_heartbeat(TASK_MON_COMMUNICATION);
+
+                if (mqtt_session_ready) {
+                    const esp_err_t send_err = task_communication_publish_persisted(
+                        STORAGE_RECORD_TELEMETRY, mqtt_topics_datos(), METER_MQTT_PUBLISH_QOS);
+                    if ((send_err != ESP_OK) && (send_err != ESP_ERR_NOT_FOUND)) {
+                        mqtt_session_ready = false;
+                        mqtt_profile_ready = false;
+                        s_subscribed = false;
+                        break;
+                    }
+                }
+                if ((xTaskGetTickCount() - last_hb_tick) < hb_ticks) {
+                    continue;
+                }
+                last_hb_tick = xTaskGetTickCount();
 
                 // ?????? Revisar comandos remotos pendientes ??????????????????????????????????????????
                 if (s_subscribed) {

@@ -51,6 +51,7 @@ esp_err_t task_manager_start(void)
 
     unsigned started = 0U;
 
+#if METER_STORAGE_ENABLE
     if (storage_service_start() == ESP_OK) {
         ++started;
     } else {
@@ -60,6 +61,11 @@ esp_err_t task_manager_start(void)
             SYSTEM_SEVERITY_WARNING, ESP_FAIL,
             "storage task creation failed");
     }
+#else
+    LOG_WARN(TAG, "storage disabled by integration profile; live telemetry only");
+    (void)system_health_set_disabled(SYSTEM_MODULE_SD,
+                                     "microSD pending hardware integration");
+#endif
 
     if (system_event_dispatcher_start() == ESP_OK) {
         ++started;
@@ -162,15 +168,17 @@ esp_err_t task_manager_start(void)
  * @brief Publica una solicitud de calibracion.
  * @param request_type Tipo de solicitud.
  */
-void task_manager_request_calibration(uint8_t request_type)
+esp_err_t task_manager_request_calibration(uint8_t request_type)
 {
     if (q_calib_request == NULL) {
         LOG_WARN(TAG, "q_calib_request not initialized");
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
     CalibRequest_t req = {.request_type = request_type};
     if (xQueueSend(q_calib_request, &req, 0) != pdTRUE) {
         LOG_WARN(TAG, "q_calib_request full - request discarded");
+        return ESP_ERR_NO_MEM;
     }
+    return ESP_OK;
 }

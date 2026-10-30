@@ -1,0 +1,7 @@
+# Diagnostico Obj4: conserva exactamente nvs, phy_init y factory existentes.
+# La zona 0x110000-0x150000 estaba borrada (todo 0xFF) antes de usarla.
+# Name, Type, SubType, Offset, Size, Flags
+nvs,      data, nvs,      0x9000,   24K,
+phy_init, data, phy,      0xf000,    4K,
+factory,  app,  factory,  0x10000,   1M,
+coredump, data, coredump, 0x110000, 256K,

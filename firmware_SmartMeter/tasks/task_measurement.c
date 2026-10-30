@@ -427,6 +427,7 @@ void task_measurement(void *pvParameters)
     }
     uint32_t cycle_counter = 0U;
     bool prev_ac_present = false;
+    uint8_t voltage_fail_streak = 0U;
 
     s_last_vrms_raw = 0U;
     s_have_vrms_raw = false;
@@ -475,7 +476,23 @@ void task_measurement(void *pvParameters)
         task_monitor_heartbeat(TASK_MON_MEASUREMENT);
 
         MeterData_t snap = {0};
-        snap.vrms = voltage_get_vrms();
+        const esp_err_t voltage_err = voltage_read_vrms(&snap.vrms);
+        if (voltage_err == ESP_OK) {
+            voltage_fail_streak = 0U;
+        } else {
+            if (voltage_fail_streak < UINT8_MAX) {
+                ++voltage_fail_streak;
+            }
+            // Una espera SPI aislada no equivale a 0 V de red. Mantener la
+            // ultima muestra valida; tras dos ciclos, procesar la falla para
+            // que el debounce y la recuperacion puedan detectar una caida real.
+            if (s_ac_present_latched && (voltage_fail_streak <= 2U)) {
+                LOG_WARN(TAG, "AVRMS sample discarded err=%s streak=%u",
+                         esp_err_to_name(voltage_err), (unsigned)voltage_fail_streak);
+                ++cycle_counter;
+                continue;
+            }
+        }
         snap.vpeak = voltage_get_vpeak();
         snap.frequency = voltage_get_frequency();
         snap.irms_a = current_get_irms_a();
@@ -622,6 +639,22 @@ void task_measurement(void *pvParameters)
 
         const bool ac_present = s_ac_present_latched;
         const bool ac_changed = (ac_present != prev_ac_present);
+
+        if (ac_changed) {
+            if (ac_present) {
+                node_health_ac_restore_inc();
+                (void)system_health_report_occurrence(
+                    SYSTEM_MODULE_SYSTEM, SYSTEM_EVENT_AC_RESTORED,
+                    SYSTEM_SEVERITY_INFO, ESP_OK,
+                    "AC input restored");
+            } else {
+                node_health_ac_loss_inc();
+                (void)system_health_report_occurrence(
+                    SYSTEM_MODULE_SYSTEM, SYSTEM_EVENT_AC_LOST,
+                    SYSTEM_SEVERITY_WARNING, ESP_ERR_INVALID_STATE,
+                    "AC input lost");
+            }
+        }
 
         if (ac_present) {
             const bool no_load_current = (fabsf(snap.irms_a) <= METER_NO_LOAD_IRMS_A_MAX_A);

@@ -14,11 +14,11 @@
 #include "ff.h"
 #include "board_config.h"
 #include "logger.h"
+#include "spi_shared_bus.h"
 
 static const char *TAG = "sd_storage";
 
 static bool s_mounted;
-static bool s_spi_bus_ready;
 static sdmmc_card_t *s_card;
 static StaticSemaphore_t s_storage_mutex_buffer;
 static SemaphoreHandle_t s_storage_mutex;
@@ -68,30 +68,12 @@ esp_err_t sd_storage_init(void)
         return ESP_OK;
     }
 
-    // 1) Bus SPI2_HOST compartido fisicamente con el ADE9153A. Si el ADE
-    // ya inicializo el bus, ESP_ERR_INVALID_STATE es el resultado esperado;
-    // FATFS agrega la SD como otro dispositivo con su propio CS.
-    const spi_bus_config_t bus_cfg = {
-        .mosi_io_num = SD_PIN_MOSI,
-        .miso_io_num = SD_PIN_MISO,
-        .sclk_io_num = SD_PIN_SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        // 4000 bytes cubren holgado transferencias FATFS (512 B por bloque).
-        .max_transfer_sz = 4000,
-    };
-    esp_err_t err = ESP_OK;
-    if (!s_spi_bus_ready) {
-        err = spi_bus_initialize(SD_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
-        if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE)) {
-            LOG_ERROR(TAG, "spi_bus_initialize(SPI2 compartido) fallo: %s",
-                      esp_err_to_name(err));
-            return err;
-        }
-        /* El bus queda instalado aunque no haya tarjeta. Recordarlo evita
-         * repetir spi_bus_initialize() en cada sondeo de recuperacion y el
-         * mensaje de error interno "SPI bus already initialized". */
-        s_spi_bus_ready = true;
+    // 1) Bus SPI2 compartido: la inicializacion centralizada es idempotente.
+    esp_err_t err = spi_shared_bus_init();
+    if (err != ESP_OK) {
+        LOG_ERROR(TAG, "inicializacion SPI2 compartido fallo: %s",
+                  esp_err_to_name(err));
+        return err;
     }
 
     // 2) Configuracion del slot SDSPI. CS manejado por el driver.
@@ -121,7 +103,7 @@ esp_err_t sd_storage_init(void)
         } else {
             LOG_ERROR(TAG, "mount fallo: %s", esp_err_to_name(err));
         }
-        // No liberamos el bus compartido: el ADE9153A puede estar agregado.
+        // No liberar el bus compartido: el ADE9153A puede estar agregado.
         return err;
     }
 
@@ -132,10 +114,11 @@ esp_err_t sd_storage_init(void)
             ((uint64_t)s_card->csd.capacity * s_card->csd.sector_size) /
             (1024ULL * 1024ULL);
         LOG_INFO(TAG,
-                 "SD montada OK en %s: %s, %llu MB, bus SPI2 compartido (MOSI=%d MISO=%d SCLK=%d CS=%d)",
+                 "SD montada OK en %s: %s, %llu MB, SPI2=%d Hz (MOSI=%d MISO=%d SCLK=%d CS=%d)",
                  SD_MOUNT_POINT,
                  s_card->cid.name,
                  (unsigned long long)cap_mb,
+                 SD_SPI_CLK_HZ,
                  SD_PIN_MOSI, SD_PIN_MISO, SD_PIN_SCLK, SD_PIN_CS);
     }
     return ESP_OK;

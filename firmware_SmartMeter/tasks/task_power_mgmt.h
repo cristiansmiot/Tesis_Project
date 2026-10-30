@@ -10,7 +10,8 @@
  * Integracion prevista:
  *   - task_manager may call task_power_mgmt_start.
  *   - Flujo de datos: meter_data_get_snapshot() -> MeterData_t
- * Pines reservados en board_config.h: BATT_ADC=4 POWER_DETECT=5 BACKUP_ENABLE=6
+ * No controla el PWRKEY del SIM7080G; esa recuperacion pertenece a
+ * task_communication y al controlador sim7080g_power.
  */
 
 #include "esp_err.h"

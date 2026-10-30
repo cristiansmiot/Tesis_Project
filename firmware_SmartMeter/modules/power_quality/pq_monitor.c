@@ -47,7 +47,8 @@ uint32_t pq_monitor_process_snapshot(const MeterData_t *snap)
     if ((snap->vrms >= METER_AC_PRESENT_VRMS_MIN_V) && !freq_valid) {
         flags |= PQ_FLAG_FREQ_OOR;
     }
-    if (snap->temperature >= METER_OVERTEMP_C) {
+    if ((snap->temperature_valid != 0U) &&
+        (snap->temperature >= METER_OVERTEMP_C)) {
         flags |= PQ_FLAG_OVERTEMP;
     }
 

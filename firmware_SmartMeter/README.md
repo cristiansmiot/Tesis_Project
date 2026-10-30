@@ -47,7 +47,8 @@ nodo completo.
 
 ## Comandos remotos (topic `medidor/{id}/cmd`)
 
-`reset`, `status`, `calibrate`, `probe`, `sync_time`, `relay_off`/`relay_on`
+`reset`, `status`, `calibrate`, `probe`, `sync_time:<epoch_utc>`,
+`relay_off`/`relay_on`
 (pendientes del cableado del relé). Llegan como string plano desde el
 backend, que los audita por usuario. Ver `task_communication_process_cmd()`.
 
@@ -56,7 +57,10 @@ backend, que los audita por usuario. Ver `task_communication_process_cmd()`.
 - `medidor/{id}/datos` — V, I, P, Q, S, FP, f, energía, temperatura, flags PQ.
 - `medidor/{id}/estado` — salud del nodo cada 5 min (retained).
 - `medidor/{id}/alerta` — eventos PQ (event-driven).
-- `medidor/{id}/conexion` — online/offline con LWT del broker.
+
+La presencia no depende de LWT: el backend actualiza `ultima_conexion`
+(`last_seen`) con trafico MQTT vivo y marca offline tras el umbral de
+inactividad configurado.
 
 ## Compilación
 
@@ -75,7 +79,8 @@ hay que listarlo ahí.
 
 Todo lo ajustable está en `config/`:
 
-- `board_config.h` — pines (ADE y SD comparten SPI2 con CS separados, I2C compartido
+- `board_config.h` — pines (ADE y SD comparten SPI2 con CS separados y MISO_SD
+  aislado por hardware, I2C compartido
   OLED+RTC, UART1 para SIM7080G).
 - `meter_config.h` — periodos, APN, umbrales de supervisión y backlog.
 - `rtos_app_config.h` — prioridades, stacks y colas.

@@ -18,6 +18,7 @@ Los archivos de produccion quedan en `/sdcard/smartmeter`:
 
 - `history_v1.csv`: historico cada 60 segundos;
 - `telemetry_v1.jsonl`: telemetria MQTT pendiente;
+- `telemetry_audit_v1.jsonl`: copia permanente de cada paquete de medicion;
 - `alerts_v1.jsonl`: alertas pendientes;
 - `events_v1.jsonl`: eventos locales.
 
@@ -30,10 +31,16 @@ El encabezado CSV v1 es:
 schema,device,boot_id,sequence,timestamp_utc,local_bogota,time_valid,uptime_ms,type,vrms,irms_a,p_w,q_var,s_va,pf,f_hz,e_wh,temp_c,pq
 ```
 
-Cada linea JSONL pendiente contiene `v`, `device`, `boot`, `seq`, `ts_utc`,
-`local`, `time_valid`, `uptime_ms`, `type` y `payload`. Si la hora no es
-confiable, `ts_utc` vale `0`, `local` queda vacio y `time_valid` es `false`.
-Nunca se sintetiza una fecha de 1970 o 2000.
+Desde el firmware `1.1.0-obj4`, el historico de 60 s genera tambien el paquete
+SenML con la misma identidad y muestra. Se escribe en la auditoria permanente
+y en la cola pendiente. Un contador exclusivo de mediciones evita confundir
+eventos del sistema con huecos de entrega. La auditoria conserva exactamente
+el paquete enviado, incluso despues de vaciar la cola.
+
+La telemetria nueva se guarda como array SenML. Los registros antiguos y las
+alertas envueltos en JSON con `payload` siguen siendo legibles. Con hora no
+confiable se conserva `time_valid=false`, `ts_device=0` e identidad por
+dispositivo, boot y secuencia. No se inventa una fecha de respaldo.
 
 ## Confirmacion y recuperacion
 
@@ -42,6 +49,11 @@ exito de MQTT solicita confirmacion; el servicio reescribe el remanente en
 `.tmp`, renombra el original a `.bak`, instala el nuevo archivo y elimina el
 respaldo. Tras un corte, el arranque conserva el archivo principal valido o
 restaura `.bak`; si solo existe `.tmp`, lo promueve.
+
+Una confirmacion encolada bloquea nuevas lecturas de esa cabeza hasta que se
+procese, para evitar que un segundo ACK elimine el registro siguiente.
+La confirmacion significa aceptacion por el modem; la recepcion real en el
+backend se verifica con la conciliacion SD-BD, segun `OBJ4_TELEMETRY_VALIDATION.md`.
 
 ## Espacio y prioridad
 
@@ -66,3 +78,28 @@ Hay una cola prioritaria estatica para alertas/confirmaciones y otra normal
 para telemetria/eventos. Si una cola se llena, la solicitud retorna
 `ESP_ERR_NO_MEM`, aumenta `requests_dropped` y el productor sigue ejecutando.
 El despachador conserva alertas en su cola RAM si no puede persistirlas.
+
+## Bus SPI compartido con ADE9153A
+
+La PCB comparte SPI2 entre el ADE9153A y la microSD. La seleccion es
+independiente:
+
+- ADE9153A: CS en GPIO10.
+- microSD: CS en GPIO7.
+
+`drivers/spi_shared` es el unico propietario de la inicializacion del bus. Los
+drivers de ADE y SD solicitan el bus ya creado y no vuelven a ejecutar
+`spi_bus_initialize`. Durante el arranque, ambos CS se colocan inactivos antes
+de registrar cada dispositivo. Esta arquitectura elimina el error de doble
+inicializacion sin recablear la PCB.
+
+La microSD se opera a **4 MHz**. En la PCB montada, 20 MHz produjo un
+`ESP_ERR_TIMEOUT` transitorio; el servicio se desmonto, reintento y recupero en
+aproximadamente un segundo mientras el ADE permanecio operativo. A 4 MHz, la
+prueba de humo posterior escribio una medicion de 60 s y dreno la cola sin
+repetir el timeout.
+
+El resultado actual es una mitigacion funcional. El criterio de cierre es una
+corrida integrada de al menos 60 minutos sin error SPI persistente, seguida de
+conciliacion SD-BD de 30 registros y un corte de red de 10 minutos con drenado
+completo del backlog.

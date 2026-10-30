@@ -13,8 +13,8 @@ extern "C" {
 /**
  * @brief Inicializa o reutiliza SPI2_HOST compartido y monta la SD con FATFS.
  *
- * Comparte MOSI/MISO/SCLK con el ADE9153A y usa un CS independiente
- * (ver board_config.h, SD_PIN_*). El driver SPI serializa transacciones.
+ * Comparte MOSI/MISO/SCLK con el ADE9153A y usa un CS independiente. La rama
+ * MISO_SD debe incorporar aislamiento triestado gobernado por SD_CS.
  * El punto de montaje queda expuesto en SD_MOUNT_POINT ("/sdcard").
  *
  * Es idempotente: llamadas subsiguientes devuelven ESP_OK si ya esta

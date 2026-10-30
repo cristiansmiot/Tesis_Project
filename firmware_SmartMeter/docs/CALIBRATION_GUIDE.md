@@ -71,3 +71,28 @@ Al reiniciar, si hay persistencia valida:
 
 - `calibration loaded from NVS: mode=... AIGAIN=... AVGAIN=... AICERT=... AVCERT=...`
 
+## Prueba comparativa para caracterizacion
+
+El comando MQTT `calibrate` y la accion ADE del menu encolan una solicitud
+`CALIB_REQUEST_FULL` en `q_calib_request`; el hilo de calibracion ya queda
+iniciado por `task_manager_start()`. La prueba debe producir el log `mSure done`
+y un estado `CAL` con `VALID|PERSISTED|LOADED` (`0x0E`). Si ese log no aparece,
+no se cuenta como calibracion ejecutada.
+
+Registrar 30 pares de lecturas contra la misma referencia antes de solicitar
+mSure y 30 despues, con igual tension, carga, factor de potencia y periodo de
+estabilizacion. Guardar AICC/AICERT, AVCC/AVCERT, AIGAIN/AVGAIN, firmware y
+estado `CAL`. Reiniciar sin borrar NVS y confirmar `calibration loaded from
+NVS` y las mismas ganancias aplicadas.
+
+El `0x0E` solo confirma que el firmware acepto y guardo el resultado mSure; la
+exactitud se determina comparando Vrms, Irms, potencia y energia con el patron,
+incluyendo su incertidumbre. La compilacion actual usa constantes por defecto
+de la placa de evaluacion ADI (`METER_USE_ADI_API_CC_DEFAULTS=1`); no cambiar a
+la ruta AN-1571 ni modificar manualmente ganancias durante una corrida.
+
+La compilacion para el montaje residencial queda en `METER_VNOM_V=120 V`.
+Confirmar con la referencia que el circuito bajo prueba tiene esa tension
+nominal antes de conectar la carga; si no coincide, ajustar y recompilar. Los
+umbrales de sag/swell dependen de `METER_VNOM_V`.
+

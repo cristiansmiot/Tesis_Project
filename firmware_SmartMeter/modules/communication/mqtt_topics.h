@@ -22,7 +22,7 @@ extern "C" {
  * celular.
  *
  * Con la identidad en runtime un mismo binario sirve para toda la flota:
- * los topics medidor/<id>/{datos,estado,alerta,conexion,cmd} no chocan
+ * los topics medidor/<id>/{datos,estado,alerta,cmd} no chocan
  * entre nodos y el backend auto-registra cada id nuevo.
  */
 
@@ -36,7 +36,6 @@ const char *mqtt_topics_device_id(void);
 const char *mqtt_topics_datos(void);
 const char *mqtt_topics_estado(void);
 const char *mqtt_topics_alerta(void);
-const char *mqtt_topics_conexion(void);
 const char *mqtt_topics_cmd(void);
 
 #ifdef __cplusplus

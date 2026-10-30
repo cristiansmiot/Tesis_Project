@@ -20,7 +20,7 @@ typedef struct {
 
 static const char *TAG = "keypad_driver";
 static bool s_initialized;
-static keypad_button_t s_buttons[3];
+static keypad_button_t s_buttons[4];
 
 static int64_t keypad_driver_now_ms(void)
 {
@@ -77,9 +77,13 @@ esp_err_t keypad_driver_init(void)
     (void)gpio_reset_pin((gpio_num_t)PIN_BTN_UP);
     (void)gpio_reset_pin((gpio_num_t)PIN_BTN_SELECT);
     (void)gpio_reset_pin((gpio_num_t)PIN_BTN_DOWN);
+    (void)gpio_reset_pin((gpio_num_t)PIN_BTN_BACK);
 
     const gpio_config_t cfg = {
-        .pin_bit_mask = (1ULL << PIN_BTN_UP) | (1ULL << PIN_BTN_SELECT) | (1ULL << PIN_BTN_DOWN),
+        .pin_bit_mask = (1ULL << PIN_BTN_UP) |
+                        (1ULL << PIN_BTN_SELECT) |
+                        (1ULL << PIN_BTN_DOWN) |
+                        (1ULL << PIN_BTN_BACK),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -95,6 +99,7 @@ esp_err_t keypad_driver_init(void)
     const bool up_pressed = (gpio_get_level((gpio_num_t)PIN_BTN_UP) == 0);
     const bool select_pressed = (gpio_get_level((gpio_num_t)PIN_BTN_SELECT) == 0);
     const bool down_pressed = (gpio_get_level((gpio_num_t)PIN_BTN_DOWN) == 0);
+    const bool back_pressed = (gpio_get_level((gpio_num_t)PIN_BTN_BACK) == 0);
 
     s_buttons[0] = (keypad_button_t){
         .pin = PIN_BTN_UP,
@@ -120,12 +125,21 @@ esp_err_t keypad_driver_init(void)
         .sample_pressed = down_pressed,
         .last_change_ms = now_ms,
     };
+    s_buttons[3] = (keypad_button_t){
+        .pin = PIN_BTN_BACK,
+        .short_event = KEYPAD_EVENT_BACK,
+        .emit_on_press = true,
+        .stable_pressed = back_pressed,
+        .sample_pressed = back_pressed,
+        .last_change_ms = now_ms,
+    };
     s_initialized = true;
     LOG_INFO(TAG,
-             "keypad ready up=%d(%d) select=%d(%d) down=%d(%d)",
+             "keypad ready up=%d(%d) select=%d(%d) down=%d(%d) back=%d(%d)",
              PIN_BTN_UP, up_pressed ? 0 : 1,
              PIN_BTN_SELECT, select_pressed ? 0 : 1,
-             PIN_BTN_DOWN, down_pressed ? 0 : 1);
+             PIN_BTN_DOWN, down_pressed ? 0 : 1,
+             PIN_BTN_BACK, back_pressed ? 0 : 1);
     return ESP_OK;
 }
 
@@ -136,7 +150,7 @@ keypad_event_t keypad_driver_poll_event(void)
     }
 
     const int64_t now_ms = keypad_driver_now_ms();
-    for (size_t i = 0U; i < 3U; ++i) {
+    for (size_t i = 0U; i < (sizeof(s_buttons) / sizeof(s_buttons[0])); ++i) {
         const bool pressed = (gpio_get_level((gpio_num_t)s_buttons[i].pin) == 0);
         const keypad_event_t event = keypad_driver_process_button(&s_buttons[i], pressed, now_ms);
         if (event != KEYPAD_EVENT_NONE) {

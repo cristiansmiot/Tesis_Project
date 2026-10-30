@@ -2,7 +2,7 @@
 #define METER_CONFIG_H
 
 // Parametros electricos
-#define METER_VNOM_V              220.0f
+#define METER_VNOM_V              120.0f
 #define METER_IMAX_A              10.0f
 #define METER_LINE_FREQ_HZ        60
 // Deteccion de presencia de linea usando AVRMS crudo (sin conversion a volts).
@@ -79,7 +79,8 @@
 
 // mSure
 #define METER_MSURE_CERT_PPM      3000
-#define METER_MSURE_INIT_WAIT_MS  8000
+// Los registros CC/CERT no se actualizan antes de 8 s. Se deja 1 s de margen.
+#define METER_MSURE_INIT_WAIT_MS  9000U
 #define METER_MSURE_READY_TIMEOUT_MS 1500U
 #define METER_MSURE_USE_TURBO     0
 #define METER_MSURE_REAPPLY_ON_BOOT 1
@@ -120,10 +121,14 @@
 // Cuando MQTT no esta disponible las mediciones se anexan a un archivo
 // JSONL en la SD; al recuperar sesion se drenan en lotes pequenos para
 // no retrasar la telemetria en vivo.
+#ifndef METER_STORAGE_ENABLE
+#define METER_STORAGE_ENABLE                    1
+#endif
 #ifndef METER_SD_BASE_DIR
 #define METER_SD_BASE_DIR                      "smartmeter"
 #endif
 #define METER_SD_HISTORY_FILE                  METER_SD_BASE_DIR "/history_v1.csv"
+#define METER_SD_TELEMETRY_AUDIT_FILE          METER_SD_BASE_DIR "/telemetry_audit_v1.jsonl"
 #define METER_SD_TELEMETRY_QUEUE_FILE          METER_SD_BASE_DIR "/telemetry_v1.jsonl"
 #define METER_SD_ALERT_QUEUE_FILE              METER_SD_BASE_DIR "/alerts_v1.jsonl"
 #define METER_SD_EVENT_LOG_FILE                METER_SD_BASE_DIR "/events_v1.jsonl"
@@ -181,6 +186,17 @@
 #define METER_SIM7080G_AT_TIMEOUT_MS           4000U
 #define METER_SIM7080G_MAX_RETRIES             3U
 #define METER_SIM7080G_NETWORK_TIMEOUT_MS      120000U
+// El HAT Waveshare recibe PWR mediante transistor NPN: GPIO4 debe permanecer
+// LOW y un pulso HIGH equivale a presionar el boton. La tarea prueba UART
+// varias veces antes de tocar PWRKEY y limita los pulsos durante una averia.
+#ifndef METER_SIM7080G_AUTO_PWRKEY_RECOVERY
+#define METER_SIM7080G_AUTO_PWRKEY_RECOVERY     1
+#endif
+#define METER_SIM7080G_PWRKEY_NO_AT_PROBES     3U
+#define METER_SIM7080G_PWRKEY_PULSE_MS         3000U
+#define METER_SIM7080G_PWRKEY_BOOT_WAIT_MS     30000U
+#define METER_SIM7080G_PWRKEY_MAX_ATTEMPTS     2U
+#define METER_SIM7080G_PWRKEY_SLOW_RETRY_MS    60000U
 
 #define METER_MQTT_HOST                        "shinkansen.proxy.rlwy.net"
 #define METER_MQTT_PORT                        58954U
@@ -194,17 +210,16 @@
 // runtime (ver mqtt_topics.h); un mismo binario sirve para toda la flota.
 // El IMEI viaja como metadato en /estado, no como identidad.
 // QoS/retain por topic:
-// /datos   : QoS 0, retain=0, cada 60 s
-// /estado  : QoS 1, retain=1, cada 5 min
+// /datos   : QoS 1, retain=0, cada 60 s; conservar cola hasta verificar sesion
+// /estado  : QoS 1, retain=1, cada 5 min (snapshot, no presencia)
 // /alerta  : QoS 1, retain=0, event-driven
-// /conexion: QoS 1, retain=1 (online / LWT offline)
+// Presencia: el backend actualiza last_seen con trafico vivo y vence el nodo
+// por inactividad; este firmware de SIM7080G no admite LWT de forma fiable.
 #define METER_MQTT_ID_PREFIX                   "SM"
 #define METER_MQTT_DEVICE_ID_FALLBACK          "ESP32-001"
 
-// LWT (Last Will and Testament): el broker publica "offline" en /conexion
-// si el nodo cae sin desconectarse correctamente (sin AT+SMDISC explicito).
-#define METER_MQTT_LWT_QOS                     1
-#define METER_MQTT_LWT_RETAIN                  1
+#define METER_MQTT_STATUS_QOS                  1
+#define METER_MQTT_STATUS_RETAIN               1
 
 #define METER_MQTT_KEEPALIVE_S                 120U
 
@@ -233,16 +248,24 @@
 #define METER_MQTT_SMCONN_TIMEOUT_MS           30000U
 #define METER_MQTT_SMCONN_POSTWAIT_MS          10000U
 #define METER_MQTT_SMCONN_RETRIES              0U
-#define METER_MQTT_PUBLISH_QOS                 0
+#ifndef METER_MQTT_PUBLISH_QOS
+#define METER_MQTT_PUBLISH_QOS                 1
+#endif
 #define METER_MQTT_PUBLISH_RETAIN              0
 #define METER_MQTT_PUBLISH_TIMEOUT_MS          15000U
+// El firmware R1951.01 del SIM7080G usado en el prototipo rechaza SMPUB por
+// encima de 1024 bytes aunque revisiones posteriores del manual anuncien un
+// limite mayor. Incluye los dos bytes CRLF enviados despues del JSON.
+#define METER_MQTT_SMPUB_SAFE_MAX_BYTES        1024U
 // 1 = en cada recovery limpia sesion y reprovisiona perfil MQTT.
 // 0 = solo reprovisiona cuando el perfil local se invalida.
 #define METER_MQTT_AGGRESSIVE_RECOVERY         0
 
 // Version de firmware incluida en payload /estado (campo SenML "fw").
 // Actualizar con cada release del firmware.
-#define METER_FW_VERSION                       "1.0.0"
+#ifndef METER_FW_VERSION
+#define METER_FW_VERSION                       "1.1.0-obj4"
+#endif
 
 // Sprint 4 - UI
 #define METER_UI_ENABLE                        1

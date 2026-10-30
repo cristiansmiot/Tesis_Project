@@ -50,6 +50,7 @@
 #define ADE9153A_REG_VATHR             0x0422  // 32-bit U, Apparent threshold
 #define ADE9153A_REG_RUN               0x0480  // 16-bit U, DSP run control
 #define ADE9153A_REG_CONFIG1           0x0481  // 16-bit U, Config1
+#define ADE9153A_CONFIG1_SWRST          0x0001U // W1, self-clearing software reset
 #define ADE9153A_REG_CFMODE            0x0490  // 16-bit U, CF mode
 #define ADE9153A_REG_COMPMODE          0x0491  // 16-bit U, Computation mode
 #define ADE9153A_REG_ACCMODE           0x0492  // 16-bit U, Accumulation mode
@@ -85,11 +86,12 @@
 #define ADE9153A_RUN_OFF               0x0000U
 #define ADE9153A_PRODUCT_ID            0x0009153AU
 
-// Valores de inicio/parada mSure (desde ADE9153AAPI.cpp)
+// Valores de inicio/parada mSure (UG-1247/AN-1571 y ADE9153AAPI.cpp).
+// Para detener se limpia RUN (bit 1) conservando MODE (bit 0) en 1.
 #define ADE9153A_MSURE_START_A         0x00000013U
 #define ADE9153A_MSURE_START_A_TURBO   0x00000017U
 #define ADE9153A_MSURE_START_B         0x00000023U
 #define ADE9153A_MSURE_START_V         0x00000043U
-#define ADE9153A_MSURE_STOP            0x00000000U
+#define ADE9153A_MSURE_STOP            0x00000001U
 
 #endif // ADE9153A_REGS_H

@@ -1,88 +1,73 @@
-# Sprint 4 - Cableado UI (OLED + Botones)
+# Sprint 4 - Cableado UI (OLED + teclado de cuatro teclas)
 
-## Hardware minimo
+Fecha de actualizacion: 24 de octubre de 2026.
 
-- 1 pantalla OLED SSD1306 I2C de 128x64, 3.3V, direccion 0x3C.
-- 3 pulsadores momentaneos normalmente abiertos.
-- Cables dupont.
-- Alimentacion a 3.3V y GND desde la ESP32-S3.
+## Hardware instalado
 
-## Mapa de pines actual en firmware
+- Pantalla OLED SSD1306 I2C, 128x64, 3.3 V, direccion `0x3C`.
+- Teclado de membrana lineal de cuatro teclas con comun a GND.
+- Cuatro resistencias externas de 10 kohm a 3.3 V en la PCB.
+- ESP32-S3.
 
-Tomado de `config/board_config.h`:
+## Mapa definitivo
 
-- OLED SDA -> GPIO8
-- OLED SCL -> GPIO9
-- BTN_UP -> GPIO1
-- BTN_SELECT -> GPIO2
-- BTN_DOWN -> GPIO42
+Tomado de `config/board_config.h` y validado por pulsacion fisica:
 
-Los botones estan implementados con `pull-up` interno y logica activa en bajo.
-Eso significa que cada pulsador se conecta entre el GPIO y GND.
-No requiere resistencias externas para funcionar en la version actual.
+| Posicion / rotulo | Accion | GPIO |
+|---|---|---:|
+| Tecla 4, superior | UP | 2 |
+| Tecla 3 | DOWN | 1 |
+| Tecla 2 | SELECT | 41 |
+| Tecla 1, inferior | BACK | 42 |
 
-## Diagrama rapido
+El comun del teclado se conecta a GND. Cada entrada se mantiene en alto con la
+resistencia externa de 10 kohm y la pulsacion la lleva a nivel bajo. El driver
+tambien habilita `pull-up` interno; su presencia no sustituye las resistencias
+ya montadas y no requiere recablear la PCB.
+
+## Diagrama logico
 
 ```text
-ESP32-S3 DevKitC-1
+3.3 V -- 10k -- GPIO2  ---- tecla 4 / UP -----+
+3.3 V -- 10k -- GPIO1  ---- tecla 3 / DOWN ---+
+3.3 V -- 10k -- GPIO41 ---- tecla 2 / SELECT -+--- GND comun
+3.3 V -- 10k -- GPIO42 ---- tecla 1 / BACK ---+
 
-3V3  ---------------------> OLED VCC
-GND  ---------------------> OLED GND
-GPIO8 --------------------> OLED SDA
-GPIO9 --------------------> OLED SCL
-
-GPIO1 ----o  PUSH UP  o---- GND
-GPIO2 ----o PUSH SEL  o---- GND
-GPIO42 ---o PUSH DOWN o---- GND
+OLED SDA ---------------- GPIO8
+OLED SCL ---------------- GPIO9
+OLED VCC ---------------- 3.3 V
+OLED GND ---------------- GND
 ```
 
-## Funcion de cada boton
+## Comportamiento del firmware
 
-- BTN_UP: subir en menus o cambiar a la pantalla anterior.
-- BTN_SELECT: entrar/ejecutar opcion.
-- BTN_DOWN: bajar en menus o cambiar a la pantalla siguiente.
-- BACK: no usa boton extra. Se genera con pulsacion larga sobre `SELECT`.
+- Logica activa en bajo.
+- Antirrebote y un solo evento por pulsacion corta.
+- SELECT largo conserva el retorno como alternativa de navegacion.
+- BACK tiene tecla fisica dedicada en GPIO42.
+- La UI no debe bloquear medicion, SD ni comunicaciones.
 
-## Conveniencia de los GPIO elegidos
+## Evidencia al corte
 
-### Recomendacion practica
+Antes del remapeo final se comprobaron las cuatro lineas de entrada y se
+observaron pulsaciones de teclas 1, 2, 3 y 4, incluida tecla 4 sostenida,
+repetida y corta. El mapa definitivo compilo y fue cargado en la placa.
 
-Para una primera integracion de laboratorio, **si convienen** y puedes cablearlos asi.
-La principal ventaja es que `GPIO1`, `GPIO2` y `GPIO42` estan juntos en el header J3 de la DevKitC-1,
-asi que el arnes queda simple y ordenado.
+## Prueba corta pendiente
 
-### Analisis por pin
+Con todos los modulos conectados y antes de la corrida de 24 h:
 
-- `GPIO1`: bueno para boton, no esta usado por otro modulo del proyecto.
-- `GPIO2`: bueno para boton, no esta usado por otro modulo del proyecto.
-- `GPIO42`: funcionalmente sirve, pero tiene una salvedad importante: comparte rol con la interfaz JTAG externa del chip.
+1. Pulsar tecla 4 una vez y comprobar un desplazamiento UP.
+2. Pulsar tecla 3 una vez y comprobar un desplazamiento DOWN.
+3. Pulsar tecla 2 una vez y comprobar SELECT.
+4. Pulsar tecla 1 una vez y comprobar BACK.
+5. Mantener SELECT y confirmar que el fallback BACK se produce una sola vez.
+6. Revisar que no aparezcan resets, errores SPI ni dobles eventos.
 
-En la practica eso significa:
+Criterio: 5/5 acciones correctas y cero interferencias con ADE, SD, RTC o SIM.
 
-- Si vas a depurar por USB normal y no vas a sacar JTAG externo por pines, `GPIO42` se puede usar sin problema para el boton.
-- Si mas adelante quieres usar JTAG externo por los GPIO dedicados a esa funcion, entonces **no conviene** dejar el boton en `GPIO42`.
+## Precauciones
 
-## GPIO que conviene evitar para botones
-
-En esta placa y este proyecto, evita usar para botones:
-
-- `GPIO0`, `GPIO3`, `GPIO45`, `GPIO46`: pines de strapping/arranque.
-- `GPIO19`, `GPIO20`: usados por USB-Serial/JTAG integrado por defecto.
-- `GPIO10` a `GPIO14`: ya usados por SPI del ADE9153A.
-- `GPIO16`, `GPIO17`: ya usados por UART del SIM7080G.
-- `GPIO8`, `GPIO9`: ya usados por I2C del OLED.
-- `GPIO38`: ya usado por LED de estado.
-- `GPIO15`: ya usado por LED de red.
-- `GPIO48`: ya usado por LED de error.
-- `GPIO37`, `GPIO39`, `GPIO40`: mejor reservarlos por JTAG, segun la definicion actual del proyecto.
-
-## Si quieres dejar libre GPIO42
-
-La mejor decision depende de si Sprint 5 usara o no los GPIO comentados en el archivo de configuracion.
-Si quieres reservar `GPIO42` desde ya, una alternativa simple es mover `BTN_DOWN` a `GPIO4` o `GPIO6`,
-pero eso debe decidirse junto con el plan de gestion de energia para no pisar hardware futuro.
-
-## Recomendacion final
-
-- Si el objetivo inmediato es poner a funcionar la pantalla y navegar menus en prototipo: deja `GPIO1`, `GPIO2`, `GPIO42`.
-- Si ya sabes que vas a usar JTAG externo mas adelante: remapea desde ahora `BTN_DOWN` fuera de `GPIO42`.
+- Conectar o desconectar el teclado solo con la placa desenergizada.
+- No aplicar 5 V a ninguna entrada.
+- No mover las lineas SPI ni I2C para esta prueba.

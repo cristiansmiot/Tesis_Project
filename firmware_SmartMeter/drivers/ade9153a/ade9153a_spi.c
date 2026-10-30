@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "rtos_app_config.h"
 #include "logger.h"
+#include "spi_shared_bus.h"
 
 static const char *TAG = "ade9153a_spi";
 
@@ -58,12 +59,14 @@ static void ade9153a_spi_unlock(void)
 }
 
 /**
- * @brief Activa o desactiva CS del ADE9153A.
- * @param active true para CS activo (nivel bajo).
+ * @brief Callback conservado por compatibilidad con el HAL.
+ *
+ * La transferencia adquiere primero SPI2 compartido y controla CS dentro de
+ * esa seccion critica. Hacerlo aqui bajaria CS mientras la SD usa el bus.
  */
 static void ade9153a_cs_set_impl(bool active)
 {
-    (void)gpio_set_level(ADE9153A_PIN_CS, active ? 0 : 1);
+    (void)active;
 }
 
 /**
@@ -113,7 +116,25 @@ static esp_err_t ade9153a_spi_transfer_impl(uint8_t *tx, uint8_t *rx, size_t len
     t.tx_buffer = tx;
     t.rx_buffer = rx;
 
-    return spi_device_polling_transmit(s_spi_handle, &t);
+    /* CS manual es requisito de la interfaz existente del ADE. Adquirir SPI2
+     * antes de bajarlo mantiene atomica la secuencia frente a SDSPI. */
+    esp_err_t err = spi_device_acquire_bus(s_spi_handle, portMAX_DELAY);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = gpio_set_level(ADE9153A_PIN_CS, 0);
+    if (err == ESP_OK) {
+        /* Margen de establecimiento CS->SCLK. Antes lo aportaba de forma
+         * accidental la configuracion del dispositivo dentro del driver. */
+        esp_rom_delay_us(2U);
+        err = spi_device_polling_transmit(s_spi_handle, &t);
+        esp_rom_delay_us(2U);
+    }
+    const esp_err_t cs_err = gpio_set_level(ADE9153A_PIN_CS, 1);
+    spi_device_release_bus(s_spi_handle);
+
+    return (err != ESP_OK) ? err : cs_err;
 }
 
 /**
@@ -152,26 +173,16 @@ esp_err_t ade9153a_spi_init(void)
         return err;
     }
 
-    const spi_bus_config_t bus_cfg = {
-        .mosi_io_num = ADE9153A_PIN_MOSI,
-        .miso_io_num = ADE9153A_PIN_MISO,
-        .sclk_io_num = ADE9153A_PIN_SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        // La PCB comparte este bus con la microSD, que transfiere bloques
-        // de 512 B. Reservar margen suficiente aunque ADE use tramas cortas.
-        .max_transfer_sz = 4096
-    };
-
-    err = spi_bus_initialize(ADE9153A_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
-    if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE)) {
+    err = spi_shared_bus_init();
+    if (err != ESP_OK) {
         return err;
     }
 
     const spi_device_interface_config_t dev_cfg = {
         .clock_speed_hz = ADE9153A_SPI_CLK_HZ,
         .mode = ADE9153A_SPI_MODE,
-        .spics_io_num = -1,  // CS manual para mantener control HAL explicito.
+        // CS manual, accionado solo despues de adquirir SPI2 compartido.
+        .spics_io_num = -1,
         .queue_size = 1
     };
 
@@ -220,16 +231,8 @@ esp_err_t ade9153a_spi_recover_bus(void)
         (void)spi_bus_remove_device(s_spi_handle);
         s_spi_handle = NULL;
     }
-    if (s_spi_ready) {
-        const esp_err_t free_err = spi_bus_free(ADE9153A_SPI_HOST);
-        if ((free_err != ESP_OK) && (free_err != ESP_ERR_INVALID_STATE)) {
-            if (locked) {
-                ade9153a_spi_unlock();
-            }
-            return free_err;
-        }
-    }
-
+    /* No liberar SPI2: la microSD puede seguir registrada. Volver a agregar
+     * solamente el dispositivo ADE evita interrumpir el almacenamiento. */
     s_spi_ready = false;
     s_hal_ready = false;
     (void)gpio_set_level(ADE9153A_PIN_CS, 1);
@@ -240,7 +243,7 @@ esp_err_t ade9153a_spi_recover_bus(void)
         ade9153a_spi_unlock();
     }
 
-    LOG_WARN(TAG, "SPI bus recovery requested");
+    LOG_WARN(TAG, "ADE SPI device recovery requested on shared bus");
     return ade9153a_spi_init();
 }
 

@@ -20,14 +20,18 @@
 
 esp_err_t data_serializer_init(void);
 
+/* Side-effect free: caller owns the immutable identity shared by SD/MQTT. */
+esp_err_t data_serializer_build_senml_datos_record(const MeterData_t *snap,
+                                                   const system_record_base_t *base,
+                                                   char *out, size_t out_len);
+
 esp_err_t data_serializer_build_senml_datos(const MeterData_t *snap,
                                              char *out,
                                              size_t out_len);
 
 /**
- * Variante con base time explicito (epoch UTC en segundos). Se usa al
- * bufferizar en SD: una medicion entregada horas despues debe llevar su
- * propio timestamp, no el de recepcion del backend (bt=0).
+ * Legacy helper creating a NEW identity with an explicit UTC base time.
+ * Retries must reuse a serialized packet or the _record() variant above.
  */
 esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
                                                double bt_epoch,

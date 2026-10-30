@@ -18,6 +18,20 @@
 #include <stdint.h>
 #include "esp_err.h"
 
+typedef struct {
+    int cereg_stat;
+    int cnact_state;
+    int smstate;
+    bool radio_valid;
+    float rsrp_dbm;
+    float rsrq_db;
+    float sinr_db;
+    int32_t last_publish_error;
+    int32_t last_recovery_error;
+    uint32_t last_recovery_ms;
+    char recovery_stage[24];
+} mqtt_diagnostics_t;
+
 /**
  * @brief Inicializa la capa MQTT del SIM7080G (parametros de broker).
  * @return ESP_OK en caso de exito.
@@ -85,6 +99,9 @@ esp_err_t mqtt_client_read_command(char *cmd_out, size_t cmd_len);
  * @return Milisegundos del ultimo SMCONN exitoso (0 si aun no conecta).
  */
 uint32_t mqtt_client_get_last_connect_ms(void);
+
+/** Copia la ultima fotografia tomada inmediatamente despues de un fallo. */
+void mqtt_client_get_diagnostics(mqtt_diagnostics_t *out);
 
 #endif // MQTT_CLIENT_H
 

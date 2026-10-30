@@ -15,17 +15,18 @@
 // entra en busy-loop, un supervisor de prioridad baja jamas ejecutaria.
 #define TASK_PRIO_SUPERVISOR     6
 
-// Stack sizes (palabras de FreeRTOS)
+// Stack sizes en bytes (ESP-IDF xTaskCreate). El dispatcher serializa eventos
+// a JSON/SenML y necesita margen para buffers locales y llamadas anidadas.
 #define TASK_STACK_MEASUREMENT   4096
 #define TASK_STACK_CALIBRATION   8192
 #define TASK_STACK_PQ            4096
-#define TASK_STACK_COMM          6144
+#define TASK_STACK_COMM          8192
 #define TASK_STACK_UI            5120
 #define TASK_STACK_POWER_MGMT    4096
 #define TASK_STACK_SUPERVISOR    3072
-#define TASK_STACK_SYSTEM_EVENTS 4096
+#define TASK_STACK_SYSTEM_EVENTS 8192
 #define TASK_STACK_TIME          3072
-#define TASK_STACK_STORAGE       5120
+#define TASK_STACK_STORAGE       8192
 
 // Longitudes de queues
 #define QUEUE_METER_EVENTS_LEN   16

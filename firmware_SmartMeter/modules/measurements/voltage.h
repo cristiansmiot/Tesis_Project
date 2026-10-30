@@ -17,6 +17,9 @@ esp_err_t voltage_init(float target_avcc);
  */
 float voltage_get_vrms(void);
 
+/** Lee Vrms e informa fallos SPI o valores crudos invalidos sin convertirlos en 0 V. */
+esp_err_t voltage_read_vrms(float *out_vrms);
+
 /**
  * @brief Obtiene voltaje pico.
  * @return Voltaje pico en volts.

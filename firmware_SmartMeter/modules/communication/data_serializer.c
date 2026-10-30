@@ -2,10 +2,12 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include "esp_system.h"
 #include "ade9153a_init.h"
 #include "meter_config.h"   // umbrales AC/carga, METER_FW_VERSION
 #include "meter_data.h"
 #include "mqtt_topics.h"    // mqtt_topics_device_id() para el bn SenML
+#include "mqtt_client.h"
 #include "node_health.h"    // node_health_get_rssi_dbm(), get_msg_tx(), get_reconnects()
 #include "pq_monitor.h"     // PQ_FLAG_SAG, PQ_FLAG_SWELL, PQ_FLAG_FREQ_OOR, PQ_FLAG_OVERTEMP
 #include "sim7080g_init.h"  // sim7080g_get_imei()
@@ -14,6 +16,28 @@
 
 static const char *TAG = "data_serializer";
 static bool s_initialized;
+
+static const char *data_serializer_reset_reason_name(esp_reset_reason_t reason)
+{
+    switch (reason) {
+        case ESP_RST_POWERON: return "power_on";
+        case ESP_RST_EXT: return "external";
+        case ESP_RST_SW: return "software";
+        case ESP_RST_PANIC: return "panic";
+        case ESP_RST_INT_WDT: return "interrupt_wdt";
+        case ESP_RST_TASK_WDT: return "task_wdt";
+        case ESP_RST_WDT: return "watchdog";
+        case ESP_RST_DEEPSLEEP: return "deep_sleep";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_SDIO: return "sdio";
+        case ESP_RST_USB: return "usb";
+        case ESP_RST_JTAG: return "jtag";
+        case ESP_RST_EFUSE: return "efuse";
+        case ESP_RST_PWR_GLITCH: return "power_glitch";
+        case ESP_RST_CPU_LOCKUP: return "cpu_lockup";
+        default: return "unknown";
+    }
+}
 
 static const char *data_serializer_ade_action_name(ade9153a_recovery_action_t action)
 {
@@ -110,8 +134,8 @@ esp_err_t data_serializer_build_current_json(char *out_json, size_t out_len)
 // =============================================================================
 // SenML RFC 8428 ? Formato activo de telemetria
 // Base Name: "urn:dev:mac:<METER_MQTT_CLIENT_ID>:/"
-// Base Time: segundos desde arranque del dispositivo (monotono, no UTC).
-//            El backend asigna timestamp UTC al momento de recepcion.
+// Base Time: UTC seconds when time_valid=true; otherwise zero. Device and
+// server timestamps remain separate, including delayed queue delivery.
 // Referencia de unidades: https://www.iana.org/assignments/senml/senml.xhtml
 // =============================================================================
 
@@ -119,12 +143,11 @@ esp_err_t data_serializer_build_senml_datos(const MeterData_t *snap,
                                              char *out,
                                              size_t out_len)
 {
-    // bt=0: RFC 8428 deja que el receptor use el tiempo de recepcion como
-    // referencia (sec 4.5.3: valores < 2^28 son relativos). Para telemetria
-    // en vivo el backend asigna timestamp UTC al recibir, asi que el reloj
-    // local no importa. Para datos diferidos (backlog SD) usar la variante
-    // _at() con epoch real.
-    return data_serializer_build_senml_datos_at(snap, 0.0, out, out_len);
+    system_record_base_t base;
+    const esp_err_t err = system_record_base_create(SYSTEM_RECORD_MEASUREMENT, &base);
+    if (err != ESP_OK) { return err; }
+    base.sequence = node_health_data_generated_inc();
+    return data_serializer_build_senml_datos_record(snap, &base, out, out_len);
 }
 
 esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
@@ -132,20 +155,48 @@ esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
                                                char *out,
                                                size_t out_len)
 {
+    system_record_base_t base;
+    const esp_err_t err = system_record_base_create(SYSTEM_RECORD_MEASUREMENT, &base);
+    if (err != ESP_OK) { return err; }
+    base.sequence = node_health_data_generated_inc();
+    base.time_valid = system_time_epoch_is_valid((int64_t)bt_epoch);
+    base.timestamp_utc_s = base.time_valid ? (int64_t)bt_epoch : 0;
+    return data_serializer_build_senml_datos_record(snap, &base, out, out_len);
+}
+
+esp_err_t data_serializer_build_senml_datos_record(const MeterData_t *snap,
+                                                   const system_record_base_t *base,
+                                                   char *out, size_t out_len)
+{
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
     }
-    if ((snap == NULL) || (out == NULL) || (out_len < 256U)) {
+    if ((snap == NULL) || (base == NULL) || (out == NULL) || (out_len < 256U)) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    const double bt = bt_epoch;
+    const double bt = base->time_valid ? (double)base->timestamp_utc_s : 0.0;
 
-    // Registro base + 10 campos de medicion electrica.
+    // Una temperatura invalida no se publica como una magnitud fisica.
+    char temp_record[72] = {0};
+    if (snap->temperature_valid != 0U) {
+        (void)snprintf(temp_record, sizeof(temp_record),
+            "{\"n\":\"temp\",\"u\":\"Cel\",\"v\":%.2f},",
+            (double)snap->temperature);
+    }
+
+    // Registro base + campos de medicion y bandera de validez termica.
     // Unidades SenML: V, A, W, VAR, VA, / (adim.), Hz, Wh, Cel, count.
     const int len = snprintf(
         out, out_len,
         "[{\"bn\":\"urn:dev:serial:%s:/\",\"bt\":%.3f},"
+        "{\"n\":\"boot_id\",\"v\":%lu},"
+        "{\"n\":\"seq\",\"v\":%lu},"
+        "{\"n\":\"ts_device\",\"v\":%lld},"
+        "{\"n\":\"time_valid\",\"vb\":%s},"
+        "{\"n\":\"uptime_ms\",\"v\":%lld},"
+        "{\"n\":\"fw\",\"vs\":\"" METER_FW_VERSION "\"},"
+        "{\"n\":\"cal\",\"v\":%u},"
         "{\"n\":\"vrms\",\"u\":\"V\",\"v\":%.3f},"
         "{\"n\":\"irms\",\"u\":\"A\",\"v\":%.4f},"
         "{\"n\":\"p_act\",\"u\":\"W\",\"v\":%.3f},"
@@ -154,10 +205,16 @@ esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
         "{\"n\":\"pf\",\"u\":\"/\",\"v\":%.4f},"
         "{\"n\":\"freq\",\"u\":\"Hz\",\"v\":%.3f},"
         "{\"n\":\"e_act\",\"u\":\"Wh\",\"v\":%.4f},"
-        "{\"n\":\"temp\",\"u\":\"Cel\",\"v\":%.2f},"
+        "%s{\"n\":\"temp_ok\",\"vb\":%s},"
         "{\"n\":\"pq\",\"u\":\"count\",\"v\":%lu}]",
         mqtt_topics_device_id(),
         bt,
+        (unsigned long)base->boot_id,
+        (unsigned long)base->sequence,
+        (long long)base->timestamp_utc_s,
+        base->time_valid ? "true" : "false",
+        (long long)base->uptime_ms,
+        (unsigned)snap->calibration_status,
         (double)snap->vrms,
         (double)snap->irms_a,
         (double)snap->active_power_w,
@@ -166,7 +223,8 @@ esp_err_t data_serializer_build_senml_datos_at(const MeterData_t *snap,
         (double)snap->power_factor,
         (double)snap->frequency,
         (double)snap->energy_total_nvs_wh,
-        (double)snap->temperature,
+        temp_record,
+        snap->temperature_valid ? "true" : "false",
         (unsigned long)snap->pq_status);
 
     if ((len <= 0) || ((size_t)len >= out_len)) {
@@ -205,12 +263,31 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
 
     const uint32_t ade_losses = node_health_get_ade_losses();
     const uint32_t ade_recovery_successes = node_health_get_ade_recovery_successes();
+    const uint32_t ac_losses = node_health_get_ac_losses();
+    const uint32_t ac_restores = node_health_get_ac_restores();
     const uint32_t cellular_attempts = node_health_get_cellular_attempts();
     const uint32_t cellular_successes = node_health_get_cellular_successes();
     const uint32_t mqtt_attempts = node_health_get_mqtt_attempts();
     const uint32_t mqtt_successes = node_health_get_mqtt_successes();
+    mqtt_diagnostics_t mqtt_diag = {0};
+    mqtt_client_get_diagnostics(&mqtt_diag);
+    sim7080g_radio_t radio = {0};
+    char radio_fields[256] = {0};
+    if (cellular_ok && (node_health_refresh_radio(&radio) == ESP_OK)) {
+        (void)snprintf(radio_fields, sizeof(radio_fields),
+            "{\"n\":\"rsrp\",\"v\":%.2f},"
+            "{\"n\":\"rsrq\",\"v\":%.2f},"
+            "{\"n\":\"snrr\",\"v\":%.2f},"
+            "{\"n\":\"sinr\",\"v\":%.2f},",
+            (double)radio.rsrp_dbm, (double)radio.rsrq_db,
+            (double)radio.rssnr_raw, (double)radio.sinr_db);
+        rssi_dbm = (int8_t)radio.rssi_dbm;
+    }
+    system_record_base_t status_base = {0};
+    (void)system_record_base_create(SYSTEM_RECORD_MEASUREMENT, &status_base);
     // bt=0: backend asigna timestamp UTC al recibir (ver /datos).
     const double bt = 0.0;
+    const esp_reset_reason_t reset_reason = esp_reset_reason();
 
     const int len = snprintf(
         out, out_len,
@@ -221,12 +298,32 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
         "{\"n\":\"red_cel\",\"vb\":%s},"
         "{\"n\":\"mqtt\",\"vb\":%s},"
         "{\"n\":\"ade\",\"vb\":%s},"
-        "{\"n\":\"ade_perd\",\"u\":\"count\",\"v\":%lu},"
-        "{\"n\":\"ade_rec_ok\",\"u\":\"count\",\"v\":%lu},"
-        "{\"n\":\"red_int\",\"u\":\"count\",\"v\":%lu},"
-        "{\"n\":\"red_ok\",\"u\":\"count\",\"v\":%lu},"
-        "{\"n\":\"mqtt_int\",\"u\":\"count\",\"v\":%lu},"
-        "{\"n\":\"mqtt_ok_cnt\",\"u\":\"count\",\"v\":%lu},"
+        "{\"n\":\"ade_perd\",\"v\":%lu},"
+        "{\"n\":\"ade_rec_ok\",\"v\":%lu},"
+        "{\"n\":\"acl\",\"v\":%lu},"
+        "{\"n\":\"acr\",\"v\":%lu},"
+        "{\"n\":\"red_int\",\"v\":%lu},"
+        "{\"n\":\"red_ok\",\"v\":%lu},"
+        "{\"n\":\"mqtt_int\",\"v\":%lu},"
+        "{\"n\":\"mqtt_ok_cnt\",\"v\":%lu},"
+        "{\"n\":\"dg\",\"v\":%lu},"
+        "{\"n\":\"dpa\",\"v\":%lu},"
+        "{\"n\":\"dpo\",\"v\":%lu},"
+        "{\"n\":\"rec\",\"v\":%lu},"
+        "{\"n\":\"creg\",\"v\":%d},"
+        "{\"n\":\"pdp\",\"v\":%d},"
+        "{\"n\":\"ms\",\"v\":%d},"
+        "{\"n\":\"pe\",\"v\":%ld},"
+        "{\"n\":\"re\",\"v\":%ld},"
+        "{\"n\":\"rm\",\"v\":%lu},"
+        "{\"n\":\"rs\",\"vs\":\"%s\"},"
+        "{\"n\":\"boot_id\",\"v\":%lu},"
+        "{\"n\":\"uptime_ms\",\"v\":%lld},"
+        "{\"n\":\"ts_device\",\"v\":%lld},"
+        "{\"n\":\"time_valid\",\"vb\":%s},"
+        "{\"n\":\"rr\",\"v\":%d},"
+        "{\"n\":\"rrn\",\"vs\":\"%s\"},"
+        "{\"n\":\"rv\",\"vb\":%s},%s"
         "{\"n\":\"cal_ok\",\"vb\":%s},"
         "{\"n\":\"rssi_dbm\",\"u\":\"dBm\",\"v\":%d},"
         "{\"n\":\"imei\",\"vs\":\"%s\"},"
@@ -240,10 +337,30 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
         ade_ok ? "true" : "false",
         (unsigned long)ade_losses,
         (unsigned long)ade_recovery_successes,
+        (unsigned long)ac_losses,
+        (unsigned long)ac_restores,
         (unsigned long)cellular_attempts,
         (unsigned long)cellular_successes,
         (unsigned long)mqtt_attempts,
         (unsigned long)mqtt_successes,
+        (unsigned long)node_health_get_data_generated(),
+        (unsigned long)node_health_get_data_publish_attempts(),
+        (unsigned long)node_health_get_msg_tx(),
+        (unsigned long)node_health_get_reconnects(),
+        mqtt_diag.cereg_stat,
+        mqtt_diag.cnact_state,
+        mqtt_diag.smstate,
+        (long)mqtt_diag.last_publish_error,
+        (long)mqtt_diag.last_recovery_error,
+        (unsigned long)mqtt_diag.last_recovery_ms,
+        mqtt_diag.recovery_stage,
+        (unsigned long)status_base.boot_id,
+        (long long)status_base.uptime_ms,
+        (long long)status_base.timestamp_utc_s,
+        status_base.time_valid ? "true" : "false",
+        (int)reset_reason,
+        data_serializer_reset_reason_name(reset_reason),
+        radio.valid ? "true" : "false", radio_fields,
         cal_ok ? "true" : "false",
         (int)rssi_dbm,
         sim7080g_get_imei());
@@ -324,6 +441,10 @@ esp_err_t data_serializer_build_senml_system_event(const system_event_t *event,
         out, out_len,
         "[{\"bn\":\"urn:dev:serial:%s:/\",\"bt\":%.3f},"
         "{\"n\":\"event_id\",\"vs\":\"%s\"},"
+        "{\"n\":\"boot_id\",\"v\":%lu},"
+        "{\"n\":\"seq\",\"v\":%lu},"
+        "{\"n\":\"ts_device\",\"v\":%lld},"
+        "{\"n\":\"fw\",\"vs\":\"" METER_FW_VERSION "\"},"
         "{\"n\":\"module\",\"vs\":\"%s\"},"
         "{\"n\":\"code\",\"vs\":\"%s\"},"
         "{\"n\":\"severity\",\"vs\":\"%s\"},"
@@ -336,6 +457,9 @@ esp_err_t data_serializer_build_senml_system_event(const system_event_t *event,
         mqtt_topics_device_id(),
         bt,
         event_id,
+        (unsigned long)event->boot_id,
+        (unsigned long)event->sequence,
+        (long long)event->timestamp_utc_s,
         system_module_name(event->module),
         system_event_code_name(event->code),
         system_severity_name(event->severity),

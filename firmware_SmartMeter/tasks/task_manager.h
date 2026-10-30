@@ -41,6 +41,6 @@ esp_err_t task_manager_start(void);
  * @brief Solicita calibracion via cola.
  * @param request_type Tipo de calibracion solicitada.
  */
-void task_manager_request_calibration(uint8_t request_type);
+esp_err_t task_manager_request_calibration(uint8_t request_type);
 
 #endif // TASK_MANAGER_H

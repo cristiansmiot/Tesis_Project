@@ -1,64 +1,145 @@
-﻿# Resumen Estado Actual SmartMeter (ADE9153A + ESP32-S3 + SIM7080G)
+# Resumen del estado actual del Smart Meter
 
-Fecha de corte: 2026-03-14
+Fecha de corte: **24 de octubre de 2026**
 
-## 1) Estado general
+Nodo: `SM-348518435344`
 
-- La metrologia base ya esta operativa y validada en hardware real para `V`, `I`, `P`, `Q`, `S`, `PF` y frecuencia.
-- El pipeline SIM7080G + MQTT ya quedo validado en pruebas reales: conexion inicial, reconexion, estabilidad y publicacion continua.
-- El power-cycle del SIM7080G tambien quedo validado: al apagar y volver a encender el modulo, la ESP32 sigue viva y la sesion MQTT se recupera.
-- La recuperacion runtime del ADE9153A ya quedo validada: si el chip pierde alimentacion o la respuesta SPI se vuelve invalida, el firmware enmascara la telemetria y recupera el ADE sin reiniciar toda la ESP32.
-- Los warnings de OLED observados en logs no son un bug funcional del firmware; corresponden a que la pantalla no estaba conectada durante estas pruebas.
+Firmware de caracterizacion: `1.1.0-obj4`
 
-## 2) Estado real por sprint
+Plataforma desplegada: commit `9fca7d1` en Railway
 
-- Sprint 1: implementado y validado funcionalmente.
-- Sprint 1.2: implementado; `mSure`, persistencia NVS y `task_calibration` existen, pero falta cerrar la validacion operativa de calibracion en campo. En las pruebas actuales `CAL` sigue en `0x00`.
-- Sprint 2: metrologia validada en banco propio con carga, sin carga y sin AC. Si se quiere cierre formal, queda pendiente una tabla de error contra instrumento de referencia y armonicos.
-- Sprint 3: validado en hardware real para SIM7080G, MQTT, telemetria y recovery runtime del ADE9153A.
-- Sprint 4: base de software implementada (`task_ui`, `display_manager`, `menu_handler`, teclado), pero falta validacion hardware con OLED y botones conectados.
-- Sprint 5: no iniciado funcionalmente; `task_power_mgmt` sigue en stub.
+## 1. Dictamen ejecutivo
 
-## 3) Evidencia reciente observada en pruebas (2026-03-14)
+El prototipo ya supero la integracion funcional de ADE9153A, RTC, OLED,
+teclado, SIM7080G/CAT-M1, MQTT y plataforma. La corrida basal de 12 horas con
+AC y sin carga cumplio los criterios de estabilidad: no hubo reinicios, caidas
+de AC ni perdidas del ADE; llegaron 713 secuencias consecutivas sin huecos,
+duplicados ni conflictos. Se observaron dos incidentes MQTT recuperados, sin
+perdida de secuencia.
 
-- Pruebas de metrologia satisfactorias con AC presente, sin AC, sin carga y con diferentes cargas.
-- `vrms`, `irms_a`, `p_w`, `q_var`, `s_va`, `pf` y `f_hz` se comportaron de forma coherente con la carga aplicada.
-- Pruebas del SIM7080G satisfactorias en conexion inicial, reconexion, power-cycle del modulo, estabilidad sin perdida permanente del broker y publicacion continua de telemetria real.
-- En broker se observaron publicaciones sostenidas al variar carga, lo que confirma que `task_communication`, `data_serializer` y `mqtt_client` estan trabajando en conjunto.
-- En fallas del ADE se observaron `ADE_OK=0` y `TEMP_OK=0` con magnitudes electricas en cero, sin publicar valores absurdos.
-- Al volver a alimentar el ADE, se observo `ADE recovery completed action=2` y regreso progresivo a metrologia real sin reiniciar la ESP32.
+La microSD comparte SPI2 con el ADE mediante CS independientes (`SD=GPIO7`,
+`ADE=GPIO10`). Se elimino la doble inicializacion del bus y se redujo el reloj
+de la SD de 20 MHz a 4 MHz. Despues del cambio, ADE y SD operaron juntos en la
+prueba de humo. Falta demostrar esa convivencia durante una corrida prolongada
+y conciliar la auditoria SD con la base de datos.
 
-## 4) Interpretacion corta de los campos mas relevantes
+El sistema esta listo para pasar de validacion funcional a caracterizacion
+metrologica. No se debe afirmar todavia que es clase 1: faltan las pruebas con
+instrumento de referencia, la incertidumbre y la comparacion antes/despues de
+calibrar.
 
-- `q_var`: potencia reactiva en VAR. En la convencion actual puede crecer en magnitud negativa al aumentar la carga.
-- `s_va`: potencia aparente en VA. Se reporta como magnitud positiva y aumenta con la carga.
-- `e_soft_wh`: energia integrada por software desde `p_w`.
-- `e_nvs_wh`: energia total persistida en NVS.
-- `e_wh`: alias legacy del total publicado; hoy equivale al total persistido.
-- `CAL`: mascara de estado de calibracion. Si permanece en `0x00`, la metrologia puede funcionar con constantes por defecto, pero no hay una calibracion mSure valida/cargada reportada.
-- `ade_ok`: `1` cuando el ADE esta validado y sus datos se consideran confiables.
-- `temp_ok`: `1` cuando la temperatura del ADE es valida; `0` cuando la lectura se enmascara por falla o implausibilidad.
+## 2. Estado por subsistema
 
-## 5) Conclusiones tecnicas de esta ronda
+| Subsistema | Estado al corte | Evidencia disponible | Pendiente de cierre |
+|---|---|---|---|
+| ADE9153A digital | **PASS** | Identidad, RUN, SPI 30/30, temperatura y recuperacion funcional | Exactitud e incertidumbre con referencia |
+| Medicion sin carga | **PASS preliminar** | 12 h: 0 A, 0 W y 0 Wh en 713 muestras | Repetir con SD activa y referencia conectada |
+| RTC/tiempo | **PASS funcional** | Retencion aproximada de 24 h; `RTC:OK`, `TIME:OK`, fuente RTC; 3.290 a 3.267 V | Deriva cuantitativa y cierre electrico de la ruta de respaldo |
+| SIM7080G/CAT-M1 | **PASS** | Registro, PDP, MQTT, CPSI y recuperacion automatica | Ensayos controlados de perdida de cobertura/PDP/broker |
+| MQTT/backend | **PASS basal** | 713/713 secuencias recibidas; latencia p95 15.432 s | ACK extremo a extremo mediante conciliacion SD-BD |
+| microSD | **PASS de humo** | Bus compartido centralizado; SD a 4 MHz; escritura y drenado observados | Corrida prolongada, corte de red y reconciliacion |
+| OLED/teclado | **PASS funcional** | Cuatro teclas detectadas y mapa cargado | Repetir una secuencia corta tras el remapeo definitivo |
+| Plataforma | **DESPLEGADA** | Backend, frontend, PostgreSQL y broker online en Railway; commit `9fca7d1` | Prueba de aceptacion visual y exportacion de evidencia |
+| Alarmas | **IMPLEMENTADAS** | Eventos `raised/cleared`, activos separados del historico; banda residencial 108-132 V sostenida | Inyeccion controlada de cada estado y medicion del tiempo de deteccion |
+| Calibracion | **PENDIENTE** | Ruta mSure/manual y persistencia NVS implementadas | Ensayo comparativo con patron; `CAL=0x00` no es cierre |
 
-- El problema principal reportado antes en runtime para el ADE9153A quedo resuelto a nivel funcional.
-- La telemetria ya no acepta lecturas basura del ADE como si fueran validas; primero marca falla, enmascara datos y luego exige reconfirmacion del chip.
-- El comportamiento observado al quitar AC tambien es el esperado: la deteccion cae a `AC=LOST`, limpia magnitudes electricas y conserva operativo el resto del firmware.
-- El modem SIM7080G se comporta bien en las pruebas descritas por el usuario; cualquier warning intermitente de heartbeat quedo cubierto por la logica de recovery y no impidio retomar MQTT.
+## 3. Resultado cuantitativo de la corrida de 12 horas
 
-## 6) Siguientes pasos recomendados
+Ventana: `2026-10-23 21:38:50` a `2026-10-24 09:38:50`, hora de Bogota.
 
-1. Cerrar formalmente la documentacion de Sprint 2 y Sprint 3 con las evidencias ya obtenidas.
-2. Validar en hardware la OLED y los botones para cerrar Sprint 4.
-3. Definir la convencion final de telemetria si se quiere migrar luego a SenML/RFC 8428.
-4. Cerrar la ruta de calibracion mSure en campo para dejar `CAL` con evidencia distinta de `0x00`.
-5. Como prueba opcional adicional, validar el caso de arranque en frio con el ADE ausente desde power-up.
+Configuracion: AC energizada, sin carga externa y microSD desconectada.
 
-## 7) Ubicacion concreta del estado en codigo
+| Indicador | Resultado |
+|---|---:|
+| Reinicios no controlados | 0 |
+| Disponibilidad AC / ADE | 100 % / 100 % |
+| Mediciones | 713, `seq=1..713` |
+| PDR de mensajes generados | 100 % |
+| Cobertura temporal nominal | 713/720 = 99.03 % |
+| Huecos / duplicados / conflictos | 0 / 0 / 0 |
+| Intervalo mediano / maximo | 60 s / 127 s |
+| Hora valida | 713/713 |
+| Latencia p50 / p95 / p99 | 14.937 / 15.432 / 21.797 s |
+| Latencia maxima | 47.411 s |
+| Vrms min / promedio / max | 120.073 / 120.160 / 120.280 V |
+| Frecuencia min / promedio / max | 59.927 / 59.999 / 60.085 Hz |
+| Energia inicial / final | 0 / 0 Wh |
+| Incidentes MQTT | 2, ambos recuperados; 0 activos al cierre |
+| Reconexiones contabilizadas | 1 |
 
-- Arranque y validacion ADE: `main/main.c`, `drivers/ade9153a/ade9153a_init.c`
-- Recovery y enmascaramiento de metrologia: `tasks/task_measurement.c`
-- Estado de calibracion `CALIB_STATUS_*`: `tasks/task_calibration.h`
-- Telemetria JSON publicada al broker: `modules/communication/data_serializer.c`
-- UI Sprint 4: `tasks/task_ui.c`, `modules/ui/display_manager.c`, `modules/ui/menu_handler.c`
-- Power management Sprint 5: `tasks/task_power_mgmt.c`
+El PDR de 100 % significa que llegaron todas las muestras que el firmware
+genero, no que se generaron exactamente 720 lecturas. La pausa maxima de 127 s
+explica las siete muestras nominales faltantes y refuerza la necesidad de usar
+la SD como fuente de verdad en la prueba oficial.
+
+## 4. Estado de los bloqueadores del Objetivo 4
+
+| ID | Estado | Evidencia / condicion restante |
+|---|---|---|
+| B06 Trazabilidad | **CERRADO funcionalmente** | `boot_id`, `seq`, `ts_device`, `uptime_ms`, `fw` y hora de servidor se observaron durante 12 h |
+| B07 Radio | **CERRADO funcionalmente** | RSRP/RSRQ/SINR persistidos; falta ampliar la muestra bajo fallas de red |
+| B08 Contadores | **CERRADO funcionalmente** | Generacion, intentos, aceptaciones, sesiones y reconexiones separados |
+| B09 Copia local comparable | **IMPLEMENTADO; cierre experimental pendiente** | Requiere reconciliar auditoria SD-BD-dashboard y comprobar drenado del backlog |
+| B04 Referencia | **DISPONIBLE, por identificar** | Fluke 43B prestado: registrar serie, sonda, rango, especificacion y calibracion |
+| B05 Calibracion | **PENDIENTE** | Comparacion antes/despues y persistencia tras reinicio |
+| B10 Piloto completo | **PARCIAL** | 12 h aprobadas sin SD; falta 24 h con todos los modulos |
+
+## 5. Plataforma y criterio de tension
+
+La plataforma desplegada usa 120 V nominales para el escenario residencial.
+La banda operativa configurada es 108 a 132 V (90 % a 110 %) y una excursion
+de una sola muestra no crea por si sola una alarma regulatoria: la condicion
+debe mantenerse al menos 60 s y confirmarse con lecturas consecutivas. Los
+eventos resueltos quedan como historico con inicio y fin; solo las condiciones
+vigentes se muestran como alarmas activas.
+
+Esto es una regla operativa de la plataforma, no una certificacion de calidad
+de energia. La defensa debe citar la fuente regulatoria y mostrar el tiempo de
+persistencia aplicado.
+
+## 6. Pruebas siguientes, en orden
+
+1. **G1 - Integracion completa de 60 minutos.** ADE, SD, RTC, OLED, teclado y
+   SIM conectados; AC con proteccion y sin carga. Verificar cero errores SPI
+   persistentes, una muestra/minuto, archivos SD legibles, `seq` consecutivo y
+   funcionamiento de UP/DOWN/SELECT/BACK.
+2. **P07 - Conciliacion SD-BD-dashboard.** Comparar por
+   `device_id+boot_id+seq` al menos 30 registros (10 inicio, 10 centro, 10 fin).
+   Criterio: 100 % de correspondencia y cero conflictos.
+3. **P06 - Corte controlado de comunicaciones.** Interrumpir red o broker 10
+   minutos, comprobar que la SD sigue registrando y medir deteccion,
+   reconexion, RTO y tiempo de drenado. Criterio: perdida neta cero despues del
+   drenado.
+4. **P01 - Exactitud estatica con Fluke 43B.** Registrar primero el estado de
+   calibracion del instrumento y de la pinza. Medir V, I, P, FP y frecuencia en
+   cargas resistiva, inductiva y no lineal, con 30 observaciones por punto.
+5. **P02/P04 - Energia y calibracion.** Determinar si el 43B permite una
+   referencia de energia adecuada para el objetivo. Si no, usarlo para V/I/P/FP
+   y conseguir un patron de Wh. Comparar exactamente los mismos puntos antes y
+   despues de mSure/calibracion manual.
+6. **P05 - Corrida oficial de 24 horas.** Todos los modulos activos y SD como
+   fuente de verdad. Criterios: 0 reinicios, PDR en vivo >=99 %, completitud
+   eventual 100 %, tiempo valido 100 % y alarmas explicadas.
+7. **P08 - Offline/online y alarmas.** Medir el tiempo hasta Offline, el retorno
+   a Online y cada transicion ADE/comunicaciones; conservar eventos despejados.
+
+No conviene iniciar la corrida oficial de 24 h hasta que G1, la conciliacion de
+30 registros y un corte de red corto hayan aprobado. Asi se evita perder un dia
+por un problema que puede detectarse en una hora.
+
+## 7. Archivos de evidencia principales
+
+- `docs/PROTOCOL_12H_ENERGIZED_NO_LOAD_2026-10-23.md`
+- `docs/ADE9153A_TEST_RESULT_2026-10-22.md`
+- `docs/ADE9153A_FULL_TEST_RESULT_2026-10-23.md`
+- `docs/OBJ4_TELEMETRY_VALIDATION.md`
+- `docs/HARDWARE_TEST_RESULTS.md`
+- `../../Documentos/Protocolo_Caracterizacion_Objetivo4_v0.2.md`
+
+## 8. Mensaje defendible al corte
+
+El prototipo ha demostrado integracion funcional, trazabilidad de datos y
+recuperacion automatica en una corrida basal de 12 horas. La etapa pendiente no
+es demostrar que los modulos encienden, sino cuantificar exactitud,
+incertidumbre, integridad extremo a extremo y recuperacion bajo fallas. Esa
+separacion evita confundir validacion funcional con certificacion metrologica.

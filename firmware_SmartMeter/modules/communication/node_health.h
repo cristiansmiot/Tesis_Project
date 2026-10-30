@@ -15,10 +15,16 @@
 
 #include <stdint.h>
 #include "esp_err.h"
+#include "sim7080g_radio.h"
 
 esp_err_t node_health_init(void);
 
 void node_health_msg_tx_inc(void);
+uint32_t node_health_data_generated_inc(void);
+void node_health_data_publish_attempt_inc(void);
+uint32_t node_health_get_data_generated(void);
+uint32_t node_health_get_data_publish_attempts(void);
+esp_err_t node_health_refresh_radio(sim7080g_radio_t *out);
 void node_health_reconnect_inc(void);
 void node_health_cellular_attempt_inc(void);
 void node_health_cellular_success_inc(void);
@@ -26,6 +32,8 @@ void node_health_mqtt_attempt_inc(void);
 void node_health_mqtt_success_inc(void);
 void node_health_ade_loss_inc(void);
 void node_health_ade_recovery_success_inc(void);
+void node_health_ac_loss_inc(void);
+void node_health_ac_restore_inc(void);
 
 esp_err_t node_health_get_rssi_dbm(int8_t *rssi_dbm);
 
@@ -37,5 +45,7 @@ uint32_t node_health_get_mqtt_attempts(void);
 uint32_t node_health_get_mqtt_successes(void);
 uint32_t node_health_get_ade_losses(void);
 uint32_t node_health_get_ade_recovery_successes(void);
+uint32_t node_health_get_ac_losses(void);
+uint32_t node_health_get_ac_restores(void);
 
 #endif // NODE_HEALTH_H

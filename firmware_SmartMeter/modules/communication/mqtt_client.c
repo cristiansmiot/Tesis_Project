@@ -24,9 +24,12 @@ static bool s_force_reconfigure;
 // handshake TLS vs. conexion en claro (capitulo de ciberseguridad).
 static uint32_t s_last_connect_ms;
 static int64_t s_last_op_not_allowed_pdp_cycle_us;
+// Instante del ultimo SMCONN que vencio sin confirmar sesion; el modem puede
+// completarlo minutos despues y esa sesion se adopta (ver configure_profile).
+static int64_t s_smconn_pending_us;
 static const uint32_t k_mqtt_state_timeout_ms = 1000U;
 static const uint32_t k_mqtt_diag_timeout_ms = 1000U;
-#define MQTT_OP_NOT_ALLOWED_PDP_CYCLE_COOLDOWN_MS 60000U
+#define MQTT_OP_NOT_ALLOWED_PDP_CYCLE_COOLDOWN_MS METER_MQTT_PDP_CYCLE_COOLDOWN_MS
 
 #define AT_SMCONF_URL_FMT       "AT+SMCONF=\"URL\",\"%s\",%u"
 #define AT_SMCONF_CLIENT_FMT    "AT+SMCONF=\"CLIENTID\",\"%s\""
@@ -77,8 +80,10 @@ static void mqtt_client_set_recovery_stage(const char *stage)
  * SIM7080 puede responder SMSTATE=0 y, aun así, rechazar SMCONN con
  * "operation not allowed" porque conserva el transporte TCP/MQTT anterior.
  * En ese estado una nueva configuracion SMCONF no limpia la FSM: se requiere
- * bajar y volver a subir el contexto PDP. Se limita a un ciclo por minuto
- * para que una falla persistente no provoque oscilaciones continuas.
+ * bajar y volver a subir el contexto PDP. El mismo error aparece durante los
+ * cortes de datos de la red, donde ciclar el PDP no ayuda y cada ciclo genera
+ * re-registros: se limita a uno por METER_MQTT_PDP_CYCLE_COOLDOWN_MS mientras
+ * no haya sesion (el contador se reinicia al conectar).
  */
 static esp_err_t mqtt_client_cycle_pdp_after_op_not_allowed(const char *origin)
 {
@@ -129,7 +134,15 @@ static void mqtt_client_mark_connected(void)
 {
     s_connected = true;
     s_last_op_not_allowed_pdp_cycle_us = 0LL;
+    s_smconn_pending_us = 0LL;
     node_health_mqtt_success_inc();
+}
+
+static bool mqtt_client_smconn_pending(void)
+{
+    return (s_smconn_pending_us != 0LL) &&
+           ((esp_timer_get_time() - s_smconn_pending_us) <
+            ((int64_t)METER_MQTT_SMCONN_LATE_ADOPT_MS * 1000LL));
 }
 
 static int mqtt_client_parse_registration(const char *response)
@@ -399,9 +412,24 @@ static esp_err_t mqtt_client_provision_tls(void)
 
 static esp_err_t mqtt_client_configure_profile(void)
 {
-    // Limpia sesion previa solo si el modem reporta MQTT conectado.
     int smstate = 0;
-    if ((mqtt_client_query_state(&smstate) == ESP_OK) && (smstate == 1)) {
+    const bool session_up =
+        (mqtt_client_query_state(&smstate) == ESP_OK) && (smstate == 1);
+
+    // Sesion abierta por un SMCONN que el firmware dio por vencido: es una
+    // conexion nueva y valida. Cerrarla con SMDISC producia en el broker la
+    // secuencia CONNECT -> DISCONNECT -> CONNECT. Se adopta tal cual (el
+    // perfil SMCONF ya estaba aplicado cuando se envio ese SMCONN).
+    if (session_up && mqtt_client_smconn_pending()) {
+        LOG_INFO(TAG, "adopting MQTT session from delayed SMCONN (%lu ms after timeout)",
+                 (unsigned long)((esp_timer_get_time() - s_smconn_pending_us) / 1000LL));
+        s_configured = true;
+        s_force_reconfigure = false;
+        return ESP_OK;
+    }
+
+    // Limpia sesion previa solo si el modem reporta MQTT conectado.
+    if (session_up) {
         (void)mqtt_client_send_cmd_with_log(AT_SMDISC,
                                             5000U,
                                             1U,
@@ -628,6 +656,7 @@ esp_err_t mqtt_client_connect(void)
 
         if (smconn_timed_out) {
             s_connected = false;
+            s_smconn_pending_us = esp_timer_get_time();
             return err;
         }
 
@@ -649,6 +678,9 @@ esp_err_t mqtt_client_connect(void)
                 return ESP_ERR_INVALID_STATE;
             }
             s_connected = false;
+            if (err == ESP_ERR_TIMEOUT) {
+                s_smconn_pending_us = esp_timer_get_time();
+            }
             LOG_WARN(TAG, "SMCONN retry failed. resp=%s", response);
             if (err != ESP_ERR_TIMEOUT) {
                 mqtt_client_dump_modem_snapshot("SMCONN retry fail");

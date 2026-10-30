@@ -12,6 +12,7 @@ static const char *TAG = "sim7080g_hal";
 static sim7080g_hal_config_t s_cfg;
 static SemaphoreHandle_t s_at_mutex;
 static bool s_ready;
+static int64_t s_last_rx_us;
 
 static esp_err_t sim7080g_hal_wait_response_locked(const char *expected,
                                                    char *response,
@@ -47,10 +48,12 @@ static esp_err_t sim7080g_hal_wait_response_locked(const char *expected,
             response[resp_len++] = (char)ch;
             response[resp_len] = '\0';
             if ((expected != NULL) && (strstr(response, expected) != NULL)) {
+                s_last_rx_us = esp_timer_get_time();
                 return ESP_OK;
             }
         } else if ((expected != NULL) && (strlen(expected) == 1U) && ((char)ch == expected[0])) {
             // Prompt-style tokens (ej. '>') suelen no venir en una linea completa.
+            s_last_rx_us = esp_timer_get_time();
             return ESP_OK;
         }
 
@@ -63,6 +66,7 @@ static esp_err_t sim7080g_hal_wait_response_locked(const char *expected,
                 continue;
             }
             line[line_len] = '\0';
+            s_last_rx_us = esp_timer_get_time();
             LOG_DEBUG(TAG, "< %s", line);
 
             if ((expected != NULL) && (strstr(line, expected) != NULL)) {
@@ -121,6 +125,7 @@ esp_err_t sim7080g_hal_read_urc(const char *prefix,
                 continue;
             }
             line[line_len] = '\0';
+            s_last_rx_us = esp_timer_get_time();
             if (strstr(line, prefix) != NULL) {
                 (void)strncpy(out, line, out_len - 1U);
                 out[out_len - 1U] = '\0';
@@ -144,6 +149,11 @@ esp_err_t sim7080g_hal_read_urc(const char *prefix,
 bool sim7080g_hal_is_ready(void)
 {
     return s_ready;
+}
+
+int64_t sim7080g_hal_last_rx_us(void)
+{
+    return s_last_rx_us;
 }
 
 esp_err_t sim7080g_hal_init(const sim7080g_hal_config_t *cfg)

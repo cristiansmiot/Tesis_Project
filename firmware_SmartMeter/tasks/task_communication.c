@@ -294,6 +294,7 @@ static void task_communication(void *pvParameters)
     TickType_t last_time_sync_tick = 0U;
     // Backoff progresivo para reintentos de conexion.
     uint8_t consecutive_failures = 0U;
+    TickType_t outage_start_tick = 0U;
     s_force_estado = true;
 
     (void)system_health_mark_recovering(SYSTEM_MODULE_SIM_MODEM,
@@ -309,6 +310,14 @@ static void task_communication(void *pvParameters)
         if (!mqtt_session_ready) {
             const esp_err_t modem_err = sim7080g_init();
             if (modem_err != ESP_OK) {
+                if (sim7080g_is_modem_busy()) {
+                    // Respondio por UART hace poco: SMCONN/SMPUB pendiente en
+                    // el modem. No es SIM_NO_AT ni motivo de PWRKEY.
+                    LOG_WARN(TAG, "modem ocupado sin AT - esperar sin PWRKEY");
+                    mqtt_profile_ready = false;
+                    fast_retry = true;
+                    goto cycle_delay;
+                }
                 if (!sim7080g_last_at_response_ok()) {
                     LOG_WARN(TAG, "modem sin respuesta AT - retry/power policy");
                     (void)system_health_report_failure(
@@ -399,6 +408,21 @@ static void task_communication(void *pvParameters)
                 mqtt_profile_ready = true;
             }
             const esp_err_t mqtt_connect_err = mqtt_client_connect();
+            if ((mqtt_connect_err != ESP_OK) &&
+                (sim7080g_is_modem_busy() ||
+                 (sim7080g_is_network_ready() && sim7080g_is_pdp_ready()))) {
+                // Registro y PDP activos pero el broker no es alcanzable (corte
+                // de datos de la red) o el modem sigue ocupado con el SMCONN.
+                // mqtt_client_recover repetiria SMCONN y ciclos PDP sin efecto;
+                // el siguiente intento liviano llega con el backoff.
+                LOG_WARN(TAG, "mqtt connect failed with network/PDP up - light retry");
+                (void)system_health_report_failure(
+                    SYSTEM_MODULE_MQTT, SYSTEM_EVENT_MQTT_DISCONNECTED,
+                    SYSTEM_SEVERITY_WARNING, mqtt_connect_err,
+                    "MQTT connect failed; cellular up without data");
+                fast_retry = true;
+                goto cycle_delay;
+            }
             if (mqtt_connect_err != ESP_OK) {
                 LOG_WARN(TAG, "mqtt connect failed - recover");
                 const esp_err_t mqtt_recover_err = mqtt_client_recover();
@@ -567,19 +591,31 @@ cycle_delay:
         if (fast_retry) {
             // Storage owns periodic acquisition and durable queue, even while
             // this task is blocked in modem registration or recovery.
+            if (consecutive_failures == 0U) {
+                outage_start_tick = xTaskGetTickCount();
+            }
             if (consecutive_failures < UINT8_MAX) {
                 ++consecutive_failures;
             }
             uint32_t backoff_ms = METER_COMM_RECOVERY_RETRY_MS;
             uint8_t shift = (consecutive_failures > 0U) ? (uint8_t)(consecutive_failures - 1U) : 0U;
-            if (shift > 3U) {
-                shift = 3U;
+            if (shift > 4U) {
+                shift = 4U;
             }
             backoff_ms <<= shift;
             if (backoff_ms > METER_COMM_RECOVERY_RETRY_MAX_MS) {
                 backoff_ms = METER_COMM_RECOVERY_RETRY_MAX_MS;
             }
-            vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+            // Corte prolongado: reintento liviano a ritmo lento.
+            if ((xTaskGetTickCount() - outage_start_tick) >=
+                pdMS_TO_TICKS(METER_COMM_OUTAGE_SLOW_AFTER_MS)) {
+                backoff_ms = METER_COMM_OUTAGE_SLOW_RETRY_MS;
+            }
+            const TickType_t backoff_start = xTaskGetTickCount();
+            while ((xTaskGetTickCount() - backoff_start) < pdMS_TO_TICKS(backoff_ms)) {
+                vTaskDelay(pdMS_TO_TICKS(1000U));
+                task_monitor_heartbeat(TASK_MON_COMMUNICATION);
+            }
         } else {
             consecutive_failures = 0U;
             // Heartbeat entre publishes: verifica salud del modem cada

@@ -75,6 +75,14 @@ esp_err_t sim7080g_hal_send_payload(const char *payload,
 bool sim7080g_hal_is_ready(void);
 
 /**
+ * @brief Instante (esp_timer, us) de la ultima linea recibida del modem.
+ * Cualquier respuesta (OK, ERROR, URC o prompt) demuestra que el modem esta
+ * encendido; permite distinguir "ocupado" de "apagado".
+ * @return 0 si aun no se ha recibido nada.
+ */
+int64_t sim7080g_hal_last_rx_us(void);
+
+/**
  * @brief Lee URCs pendientes del UART sin enviar comando.
  * Busca lineas que contengan el prefijo indicado (ej. "+SMSUB:").
  * @param prefix Prefijo URC a buscar.

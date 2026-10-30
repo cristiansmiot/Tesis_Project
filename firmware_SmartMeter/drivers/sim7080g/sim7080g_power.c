@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "logger.h"
 #include "meter_config.h"
+#include "sim7080g_hal.h"
 
 static const char *TAG = "sim7080g_power";
 static sim7080g_power_snapshot_t s_power;
@@ -73,6 +74,15 @@ esp_err_t sim7080g_power_handle_no_at(bool *pulsed)
     }
 
     const int64_t now_us = esp_timer_get_time();
+    // PWRKEY conmuta el modem: sobre uno ocupado (que respondio hace poco)
+    // lo apagaria. Solo se pulsa tras un silencio UART prolongado.
+    const int64_t last_rx_us = sim7080g_hal_last_rx_us();
+    if ((last_rx_us > 0) &&
+        ((now_us - last_rx_us) < ((int64_t)METER_SIM7080G_PWRKEY_MIN_SILENCE_MS * 1000LL))) {
+        LOG_WARN(TAG, "PWRKEY inhibido: el modem respondio hace %lu ms",
+                 (unsigned long)((now_us - last_rx_us) / 1000LL));
+        return ESP_ERR_NOT_FINISHED;
+    }
     const int64_t since_pulse_us = now_us - s_power.last_pulse_uptime_us;
     if ((s_power.last_pulse_uptime_us > 0) &&
         (since_pulse_us < ((int64_t)METER_SIM7080G_PWRKEY_BOOT_WAIT_MS * 1000LL))) {

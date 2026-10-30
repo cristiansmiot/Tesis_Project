@@ -2074,6 +2074,26 @@ static void hardware_test_sim_mqtt_log_diagnostics(const char *stage,
              (unsigned long)diag.last_recovery_ms);
 }
 
+// Misma politica de reintento que task_communication: exponencial hasta
+// METER_COMM_RECOVERY_RETRY_MAX_MS y ritmo lento tras un corte prolongado.
+static uint32_t hardware_test_sim_mqtt_backoff_ms(uint32_t failures,
+                                                  int64_t outage_start_us)
+{
+    uint32_t shift = (failures > 0U) ? (failures - 1U) : 0U;
+    if (shift > 4U) {
+        shift = 4U;
+    }
+    uint32_t backoff_ms = METER_COMM_RECOVERY_RETRY_MS << shift;
+    if (backoff_ms > METER_COMM_RECOVERY_RETRY_MAX_MS) {
+        backoff_ms = METER_COMM_RECOVERY_RETRY_MAX_MS;
+    }
+    if ((esp_timer_get_time() - outage_start_us) >=
+        ((int64_t)METER_COMM_OUTAGE_SLOW_AFTER_MS * 1000LL)) {
+        backoff_ms = METER_COMM_OUTAGE_SLOW_RETRY_MS;
+    }
+    return backoff_ms;
+}
+
 static void hardware_test_run_sim_mqtt(void)
 {
     char topic[96];
@@ -2106,6 +2126,8 @@ static void hardware_test_run_sim_mqtt(void)
     uint32_t seq = 0U;
     bool had_session = false;
     int64_t next_publish_us = 0LL;
+    uint32_t connect_failures = 0U;
+    int64_t outage_start_us = 0LL;
 
     for (;;) {
         if (!had_session) {
@@ -2115,10 +2137,21 @@ static void hardware_test_run_sim_mqtt(void)
             const uint32_t connect_ms =
                 (uint32_t)((esp_timer_get_time() - connect_start_us) / 1000LL);
             if (err != ESP_OK) {
+                if (connect_failures == 0U) {
+                    outage_start_us = connect_start_us;
+                }
+                ++connect_failures;
+                const uint32_t backoff_ms =
+                    hardware_test_sim_mqtt_backoff_ms(connect_failures, outage_start_us);
                 hardware_test_sim_mqtt_log_diagnostics("CONNECT_FAIL", err);
                 hardware_test_log_result("MQTT_ISO CONNECT", false,
                                          "fallo inicio modem/red o conexion al broker");
-                hardware_test_delay(HW_TEST_SIM_STATUS_PERIOD_MS);
+                LOG_INFO(TAG, "MQTT_ISO RETRY failures=%lu outage_s=%lu backoff_ms=%lu busy=%d",
+                         (unsigned long)connect_failures,
+                         (unsigned long)((esp_timer_get_time() - outage_start_us) / 1000000LL),
+                         (unsigned long)backoff_ms,
+                         (int)sim7080g_is_modem_busy());
+                hardware_test_delay(backoff_ms);
                 continue;
             }
 
@@ -2127,11 +2160,15 @@ static void hardware_test_run_sim_mqtt(void)
             next_publish_us = 0LL;
             LOG_INFO(TAG,
                      "MQTT_ISO CONNECT PASS attempt=%lu session=%lu elapsed_ms=%lu "
-                     "smconn_ms=%lu SMSTATE=1",
+                     "smconn_ms=%lu SMSTATE=1 outage_s=%lu",
                      (unsigned long)session_attempts,
                      (unsigned long)sessions_connected,
                      (unsigned long)connect_ms,
-                     (unsigned long)mqtt_client_get_last_connect_ms());
+                     (unsigned long)mqtt_client_get_last_connect_ms(),
+                     (unsigned long)((connect_failures > 0U)
+                         ? ((esp_timer_get_time() - outage_start_us) / 1000000LL)
+                         : 0LL));
+            connect_failures = 0U;
             hardware_test_log_result("MQTT_ISO CONNECT", true,
                                      "sesion con broker activa; ADE/SD excluidos");
         } else if (!mqtt_client_check_connected()) {
@@ -2152,6 +2189,8 @@ static void hardware_test_run_sim_mqtt(void)
                 next_publish_us = 0LL;
             } else {
                 had_session = false;
+                outage_start_us = esp_timer_get_time();
+                connect_failures = 1U;
                 hardware_test_sim_mqtt_log_diagnostics("RECOVERY_FAIL", recovery_err);
                 hardware_test_log_result("MQTT_ISO RECOVERY", false,
                                          "no se restablecio la sesion MQTT");

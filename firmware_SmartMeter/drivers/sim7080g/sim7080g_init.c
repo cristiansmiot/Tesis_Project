@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include "board_config.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "meter_config.h"
@@ -23,6 +24,9 @@ static uint32_t s_detected_baudrate;
 static uint32_t s_last_known_baud;
 static uint8_t s_health_fail_streak;
 static bool s_last_at_response_ok;
+// true cuando el modem no contesta AT pero respondio por UART hace menos de
+// METER_SIM7080G_BUSY_GRACE_MS: esta ocupado, no apagado.
+static bool s_modem_busy;
 static char s_runtime_apn[64];
 static char s_imei[20];        // 15 dígitos IMEI + '\0', leído con AT+GSN
 static const uint32_t k_probe_at_timeout_ms = 1500U;
@@ -44,7 +48,9 @@ static const uint8_t k_health_fail_force_reprobe = 1U;
 #define AT_CPIN_QUERY       "AT+CPIN?"
 #define AT_CSQ_QUERY        "AT+CSQ"
 #define AT_CNMP_FMT         "AT+CNMP=%u"
+#define AT_CNMP_QUERY       "AT+CNMP?"
 #define AT_CMNB_FMT         "AT+CMNB=%u"
+#define AT_CMNB_QUERY       "AT+CMNB?"
 #define AT_IFC_NONE         "AT+IFC=0,0"
 #define AT_CSCLK_OFF        "AT+CSCLK=0"
 #define AT_CPSMS_OFF        "AT+CPSMS=0"
@@ -499,6 +505,33 @@ static bool sim7080g_baud_already_tested(uint32_t baud, size_t tested_count, con
     return false;
 }
 
+static bool sim7080g_mode_already_set(const char *query,
+                                      const char *prefix,
+                                      unsigned expected)
+{
+    char response[64];
+    response[0] = '\0';
+    // expected=NULL: esperar el OK final para tener el valor completo.
+    if (sim7080g_hal_send_cmd(query, NULL, response, sizeof(response),
+                              METER_SIM7080G_AT_TIMEOUT_MS, 1U) != ESP_OK) {
+        return false;
+    }
+    const char *p = strstr(response, prefix);
+    unsigned value = 0U;
+    return (p != NULL) && (sscanf(p + strlen(prefix), " %u", &value) == 1) &&
+           (value == expected);
+}
+
+static bool sim7080g_within_busy_grace(void)
+{
+    const int64_t last_rx_us = sim7080g_hal_last_rx_us();
+    if (last_rx_us <= 0) {
+        return false;
+    }
+    return (esp_timer_get_time() - last_rx_us) <
+           ((int64_t)METER_SIM7080G_BUSY_GRACE_MS * 1000LL);
+}
+
 static esp_err_t sim7080g_probe_modem(void)
 {
     // ---- Fast path: quick-AT al ultimo baud conocido ----
@@ -518,6 +551,16 @@ static esp_err_t sim7080g_probe_modem(void)
             LOG_INFO(TAG, "SIM7080G quick-AT OK @%lu (skip probe)",
                      (unsigned long)s_detected_baudrate);
             return ESP_OK;
+        }
+        // Un modem que respondio hace poco y ahora calla esta ocupado (p. ej.
+        // SMCONN/SMPUB pendiente): barrer baudios no lo acelera y genera
+        // falsos SIM_NO_AT. Se espera a que vuelva al mismo baud.
+        if (sim7080g_within_busy_grace()) {
+            s_modem_busy = true;
+            LOG_WARN(TAG, "modem ocupado: sin AT @%lu, ultima respuesta hace %lu ms; sin barrido",
+                     (unsigned long)s_last_known_baud,
+                     (unsigned long)((esp_timer_get_time() - sim7080g_hal_last_rx_us()) / 1000LL));
+            return ESP_ERR_TIMEOUT;
         }
         LOG_WARN(TAG, "quick-AT @%lu fallo, lanzando probe completo",
                  (unsigned long)s_last_known_baud);
@@ -597,6 +640,7 @@ esp_err_t sim7080g_init(void)
         s_last_at_response_ok = (err == ESP_OK);
         if (err == ESP_OK) {
             s_health_fail_streak = 0U;
+            s_modem_busy = false;
             // Reaplica ATE0 por si el modem reinicio y volvio con echo activo.
             (void)sim7080g_hal_send_cmd(AT_ECHO_OFF,
                                         NULL,
@@ -627,7 +671,12 @@ esp_err_t sim7080g_init(void)
     }
 
     s_last_at_response_ok = false;
+    s_modem_busy = false;
     esp_err_t err = sim7080g_probe_modem();
+    if ((err != ESP_OK) && s_modem_busy) {
+        s_state = SIM7080G_STATE_ERROR;
+        return err;
+    }
     if (err != ESP_OK) {
         LOG_ERROR(TAG,
                   "SIM7080G no responde en UART%d tx=%d rx=%d. Revisar cableado, GND comun, alimentacion del modulo y baudrate.",
@@ -721,7 +770,9 @@ esp_err_t sim7080g_init(void)
         return err;
     }
 
-    {
+    // Reescribir CNMP/CMNB reconfigura la radio y provoca re-registros en la
+    // red (visibles en Kite tras cada re-probe); solo se escriben si cambian.
+    if (!sim7080g_mode_already_set(AT_CNMP_QUERY, "+CNMP:", (unsigned)METER_SIM7080G_CNMP_MODE)) {
         char cmd[32];
         (void)snprintf(cmd, sizeof(cmd), AT_CNMP_FMT, (unsigned)METER_SIM7080G_CNMP_MODE);
         err = sim7080g_hal_send_cmd(cmd,
@@ -735,7 +786,7 @@ esp_err_t sim7080g_init(void)
         }
     }
 
-    {
+    if (!sim7080g_mode_already_set(AT_CMNB_QUERY, "+CMNB:", (unsigned)METER_SIM7080G_CMNB_MODE)) {
         char cmd[32];
         (void)snprintf(cmd, sizeof(cmd), AT_CMNB_FMT, (unsigned)METER_SIM7080G_CMNB_MODE);
         err = sim7080g_hal_send_cmd(cmd,
@@ -1007,6 +1058,11 @@ bool sim7080g_is_pdp_ready(void)
 bool sim7080g_last_at_response_ok(void)
 {
     return s_last_at_response_ok;
+}
+
+bool sim7080g_is_modem_busy(void)
+{
+    return s_modem_busy && !s_last_at_response_ok;
 }
 
 void sim7080g_mark_modem_unready(void)

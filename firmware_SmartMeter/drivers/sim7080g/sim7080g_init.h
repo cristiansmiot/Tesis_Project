@@ -94,6 +94,13 @@ bool sim7080g_is_pdp_ready(void);
 bool sim7080g_last_at_response_ok(void);
 
 /**
+ * Indica que el ultimo intento no obtuvo AT pero el modem respondio por UART
+ * dentro de METER_SIM7080G_BUSY_GRACE_MS: esta ocupado, no apagado. No debe
+ * tratarse como SIM_NO_AT ni disparar PWRKEY.
+ */
+bool sim7080g_is_modem_busy(void);
+
+/**
  * @brief Fuerza reset de estado interno modem/UART para re-probe completo.
  */
 void sim7080g_mark_modem_unready(void);

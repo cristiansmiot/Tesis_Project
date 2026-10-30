@@ -155,7 +155,12 @@
 #define METER_COMM_ENABLE                      1
 #define METER_COMM_PUBLISH_PERIOD_MS           60000U
 #define METER_COMM_RECOVERY_RETRY_MS           2000U
-#define METER_COMM_RECOVERY_RETRY_MAX_MS       12000U
+#define METER_COMM_RECOVERY_RETRY_MAX_MS       30000U
+// Corte prolongado de datos (registro y PDP activos, pero el broker no es
+// alcanzable): tras este tiempo los reintentos pasan a un ritmo lento para
+// no generar señalizacion inutil; el reintento liviano detecta el regreso.
+#define METER_COMM_OUTAGE_SLOW_AFTER_MS        600000U
+#define METER_COMM_OUTAGE_SLOW_RETRY_MS        60000U
 // Intervalo de heartbeat AT entre publishes para detectar perdida del modem.
 // Si el modem no responde al health-check, dispara recovery inmediato
 // en vez de esperar al siguiente publish.
@@ -186,6 +191,11 @@
 #define METER_SIM7080G_AT_TIMEOUT_MS           4000U
 #define METER_SIM7080G_MAX_RETRIES             3U
 #define METER_SIM7080G_NETWORK_TIMEOUT_MS      120000U
+// Tras un SMPUB/SMCONN colgado el modem puede quedar varios minutos sin
+// contestar AT mientras su stack TCP reintenta (medido: 2-4.5 min). Si el
+// modem respondio por UART dentro de esta ventana se considera ocupado:
+// no se barren baudios ni se reporta SIM_NO_AT.
+#define METER_SIM7080G_BUSY_GRACE_MS           300000U
 // El HAT Waveshare recibe PWR mediante transistor NPN: GPIO4 debe permanecer
 // LOW y un pulso HIGH equivale a presionar el boton. La tarea prueba UART
 // varias veces antes de tocar PWRKEY y limita los pulsos durante una averia.
@@ -197,6 +207,9 @@
 #define METER_SIM7080G_PWRKEY_BOOT_WAIT_MS     30000U
 #define METER_SIM7080G_PWRKEY_MAX_ATTEMPTS     2U
 #define METER_SIM7080G_PWRKEY_SLOW_RETRY_MS    60000U
+// Silencio UART minimo antes de un pulso PWRKEY: un pulso sobre un modem
+// ocupado (encendido) lo apaga.
+#define METER_SIM7080G_PWRKEY_MIN_SILENCE_MS   600000U
 
 #define METER_MQTT_HOST                        "shinkansen.proxy.rlwy.net"
 #define METER_MQTT_PORT                        58954U
@@ -245,9 +258,16 @@
 // el primer intento cubre la mayoria de los casos. Si supera 30s, la ventana
 // postwait de 15s atrapa la conexion retardada (~35-38s desde SMCONN).
 // Tiempo total esperado: ~34-38s vs ~42s anterior.
-#define METER_MQTT_SMCONN_TIMEOUT_MS           30000U
-#define METER_MQTT_SMCONN_POSTWAIT_MS          10000U
+// En cortes de datos el modem puede completar un SMCONN abandonado minutos
+// despues (medido: 4.5 min); esa sesion tardia se adopta en vez de cerrarla
+// si aparece dentro de METER_MQTT_SMCONN_LATE_ADOPT_MS.
+#define METER_MQTT_SMCONN_TIMEOUT_MS           45000U
+#define METER_MQTT_SMCONN_POSTWAIT_MS          15000U
 #define METER_MQTT_SMCONN_RETRIES              0U
+#define METER_MQTT_SMCONN_LATE_ADOPT_MS        600000U
+// Ciclar el PDP no restablece un corte de datos de la red y cada ciclo
+// genera re-registros: como maximo uno por ventana mientras no haya sesion.
+#define METER_MQTT_PDP_CYCLE_COOLDOWN_MS       1800000U
 #ifndef METER_MQTT_PUBLISH_QOS
 #define METER_MQTT_PUBLISH_QOS                 1
 #endif

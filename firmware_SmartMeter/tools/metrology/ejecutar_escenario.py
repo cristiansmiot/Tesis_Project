@@ -375,6 +375,45 @@ def validar(pasos, args):
     return v_max, f_min, f_max
 
 
+def verificar_banco(args, pcr, dmm, v_max, f_min, f_max):
+    """Comprueba comunicacion y comandos sin encender la salida del PCR."""
+    ok = True
+    try:
+        print("PCR:", pcr.abrir())
+        print("DMM:", dmm.abrir())
+        errores = pcr.configurar(min(150.0, v_max + 2.0), max(40.0, f_min - 2.0),
+                                 min(70.0, f_max + 2.0), args.i_lim)
+        print("PCR configuracion (salida OFF):", errores or "OK")
+        ok = ok and not errores
+        m = pcr.medir()
+        print(f"PCR MEAS:ALL? V={m['pcr_v']:.3f} I={m['pcr_i']:.4f} "
+              f"P={m['pcr_p']:.3f} PF={m['pcr_pf']:.3f}")
+        if args.dmm_modo == "ACV":
+            rangos = [("ACV", 750), ("ACV", 100)]
+        else:
+            rangos = [("ACI", float(args.dmm_rango or 1))]
+        for modo, rango in rangos:
+            errores = dmm.configurar(modo, rango)
+            sec = "si" if dmm.secundaria else "NO (se usara la consigna del PCR)"
+            print(f"DMM {modo} {rango:g}: frecuencia secundaria={sec} "
+                  f"errores={errores or 'ninguno'}")
+            for _ in range(3):
+                t = time.time()
+                v, f = dmm.leer()
+                print(f"   READ? valor={v} f={f} ({time.time() - t:.2f} s)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"FALLO: {exc!r}")
+        ok = False
+    finally:
+        for inst in (pcr, dmm):
+            try:
+                inst.cerrar()
+            except Exception:  # noqa: BLE001
+                pass
+    print("BANCO LISTO" if ok else "REVISAR ANTES DE EJECUTAR")
+    return 0 if ok else 2
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("escenario")
@@ -404,6 +443,8 @@ def main(argv=None):
     ap.add_argument("--simular", action="store_true", help="Instrumentos simulados")
     ap.add_argument("--carga-simulada", default="potencia:15:0.62")
     ap.add_argument("--rapido", type=float, default=1.0, help="Divide las duraciones (solo pruebas)")
+    ap.add_argument("--verificar", action="store_true",
+                    help="Solo comprobar PCR y 34450A (salida apagada) y salir")
     args = ap.parse_args(argv)
 
     esc = leer_escenario(args.escenario)
@@ -416,6 +457,16 @@ def main(argv=None):
     total = sum(p.estab_s + p.med_s for p in pasos)
     print(f"Escenario {esc.ruta.name}: {prueba}, {len(pasos)} pasos, ~{total / 60:.1f} min")
     print(f"DMM {args.dmm_modo}, limite I {args.i_lim} A, V max {v_max} V, f {f_min}-{f_max} Hz")
+
+    if args.simular:
+        banco = ins.BancoSimulado(carga=args.carga_simulada)
+        pcr, dmm = ins.FuenteSimulada(banco), ins.MultimetroSimulado(banco)
+        fluke = None
+    else:
+        pcr, dmm = ins.FuentePCR(args.pcr), ins.MultimetroDMM(args.dmm)
+        fluke = ins.Fluke43B(args.fluke) if args.fluke else None
+    if args.verificar:
+        return verificar_banco(args, pcr, dmm, v_max, f_min, f_max)
 
     if not (args.si or args.simular):
         print("\nLISTA DE CHEQUEO (ADE9153A no aislado):\n"
@@ -431,13 +482,6 @@ def main(argv=None):
 
     carpeta = carpeta_corrida(args.salida, prueba)
     shutil.copy2(esc.ruta, carpeta / esc.ruta.name)
-    if args.simular:
-        banco = ins.BancoSimulado(carga=args.carga_simulada)
-        pcr, dmm = ins.FuenteSimulada(banco), ins.MultimetroSimulado(banco)
-        fluke = None
-    else:
-        pcr, dmm = ins.FuentePCR(args.pcr), ins.MultimetroDMM(args.dmm)
-        fluke = ins.Fluke43B(args.fluke) if args.fluke else None
 
     config = {
         "herramienta": f"ejecutar_escenario.py {VERSION}",

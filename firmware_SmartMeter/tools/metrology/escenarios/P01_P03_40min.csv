@@ -1,0 +1,15 @@
+# prueba: P01_P03_40min
+# descripcion: Corrida combinada de ~37 min (tension, frecuencia, carga no lineal y sin carga) con un solo preambulo de sincronia. Desviaciones declaradas frente al protocolo v0.2 por limite de tiempo: (1) estabilizacion de 15 s en los escalones de V y f, porque la carga ya acumula >3 min encendida antes del primer punto; (2) P03 de 6 min (preliminar; el protocolo pide 30 min). 155 s de medicion = 30-31 pares con historico de 5 s. DUT sin calibracion mSure persistida (CAL=0x00): linea base para P04.
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,P01,LED_V120_F60,120,60,60,155,cambio_carga,"Conectar SOLO el bombillo LED OSRAM 15 W por el canal de corriente del medidor. 34450A en paralelo en bornes de tension"
+2,P01,LED_V108,108,60,15,155,,
+3,P01,LED_V115,115,60,15,155,,
+4,P01,LED_V132,132,60,15,155,,
+5,P01,LED_F58,120,58,15,155,,
+6,P01,LED_F59p8,120,59.8,15,155,,
+7,P01,LED_F60p2,120,60.2,15,155,,
+8,P01,LED_F62,120,62,15,155,,
+9,P01,CARG_V120,120,60,45,155,cambio_carga,"Retirar el LED. Conectar el cargador de celular CON el celular cargando"
+10,P03,SIN_CARGA_V120,120,60,15,360,cambio_carga,"Retirar TODA carga: circuito de corriente del medidor abierto"

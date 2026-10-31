@@ -60,6 +60,7 @@ PCR500MA N ──┴── borne V(N) ── canal de corriente del medidor ─�
 
 ```
 cd C:\Tesis_Project\firmware_SmartMeter\tools\metrology
+python ejecutar_escenario.py escenarios\P01_P03_40min.csv --verificar
 python ejecutar_escenario.py escenarios\00_humo.csv --carga "LED OSRAM 15 W" --temp 24
 python ejecutar_escenario.py escenarios\P01_tension.csv --carga "LED OSRAM 15 W" --fluke COM8
 ```

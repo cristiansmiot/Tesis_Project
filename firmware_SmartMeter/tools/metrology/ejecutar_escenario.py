@@ -27,6 +27,7 @@ import json
 import math
 import platform
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -38,7 +39,9 @@ import instrumentos as ins
 
 AQUI = Path(__file__).resolve().parent
 SALIDA_DEFECTO = AQUI.parents[1] / "evidence" / "obj4_metrologia"
-VERSION = "1.0"
+VERSION = "1.1"
+# Registrador del Fluke 43B ya probado en el banco (tools/fluke43b_logger).
+FLUKE_EXE = AQUI.parents[2] / "tools" / "fluke43b_logger" / "Fluke43BLogger.exe"
 
 # Preambulo de sincronia: patron de tension inconfundible para alinear el
 # reloj del DUT (uptime o RTC) con el del PC por correlacion.
@@ -143,6 +146,29 @@ class Corrida:
         self.dmm_cfg = (None, None)
         self.log_fh = (carpeta / "eventos.log").open("a", encoding="utf-8")
         self.errores_muestreo = 0
+        self.fluke_proc = None
+
+    # -- Fluke 43B con su registrador .exe ---------------------------------
+    def iniciar_logger_fluke(self):
+        salida = self.carpeta / "fluke43b.csv"
+        log = (self.carpeta / "fluke43b_logger.log").open("w", encoding="utf-8")
+        cmd = [str(self.args.fluke_exe), "--port", self.args.fluke,
+               "--interval", str(max(1, int(round(self.args.periodo_fluke)))),
+               "--output", str(salida)]
+        self.fluke_proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
+                                           cwd=str(self.carpeta))
+        self.log(f"Fluke43BLogger.exe iniciado en {self.args.fluke} (pid {self.fluke_proc.pid})")
+
+    def detener_logger_fluke(self):
+        if self.fluke_proc is None:
+            return
+        if self.fluke_proc.poll() is None:
+            self.fluke_proc.terminate()
+            try:
+                self.fluke_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.fluke_proc.kill()
+        self.log(f"Fluke43BLogger.exe detenido (codigo {self.fluke_proc.returncode})")
 
     # -- bitacora ---------------------------------------------------------
     def log(self, msg):
@@ -283,6 +309,8 @@ class Corrida:
         try:
             primero = self.pasos[0]
             self.asegurar_dmm(primero.v)
+            if self.args.fluke and self.fluke is None:
+                self.iniciar_logger_fluke()
             for h in hilos:
                 h.start()
             encendida = False
@@ -331,6 +359,7 @@ class Corrida:
             for h in hilos:
                 if h.is_alive():
                     h.join(timeout=10)
+            self.detener_logger_fluke()
             pasos_csv.close()
 
 
@@ -401,6 +430,16 @@ def verificar_banco(args, pcr, dmm, v_max, f_min, f_max):
                 t = time.time()
                 v, f = dmm.leer()
                 print(f"   READ? valor={v} f={f} ({time.time() - t:.2f} s)")
+        if args.fluke and not args.fluke_python:
+            prueba = SALIDA_DEFECTO / "_verificacion_fluke.csv"
+            prueba.parent.mkdir(parents=True, exist_ok=True)
+            prueba.unlink(missing_ok=True)
+            r = subprocess.run([str(args.fluke_exe), "--port", args.fluke, "--once",
+                                "--output", str(prueba)], capture_output=True, text=True, timeout=60)
+            filas = prueba.read_text(encoding="utf-8-sig").splitlines()[1:] if prueba.exists() else []
+            medidas = sorted({f.split('","')[6] for f in filas if f.count('","') > 6})
+            print(f"Fluke {args.fluke}: {len(filas)} lecturas {medidas} {r.stdout.strip()[-120:]}")
+            ok = ok and bool(filas)
     except Exception as exc:  # noqa: BLE001
         print(f"FALLO: {exc!r}")
         ok = False
@@ -431,7 +470,11 @@ def main(argv=None):
     ap.add_argument("--dmm-rango", default=None,
                     help="ACV: auto|100|750 (auto=100 V hasta --umbral-100v). ACI: 1|10 A")
     ap.add_argument("--umbral-100v", type=float, default=115.0)
-    ap.add_argument("--fluke", default=None, help="Puerto del Fluke 43B, p.ej. COM8")
+    ap.add_argument("--fluke", default=None, help="Puerto del Fluke 43B, p.ej. COM9")
+    ap.add_argument("--fluke-exe", type=Path, default=FLUKE_EXE,
+                    help="Registrador Fluke43BLogger.exe (por defecto el de tools/)")
+    ap.add_argument("--fluke-python", action="store_true",
+                    help="Leer el Fluke desde Python (pyserial) en vez del .exe")
     ap.add_argument("--periodo", type=float, default=1.0, help="Periodo de muestreo PCR+DMM [s]")
     ap.add_argument("--periodo-fluke", type=float, default=1.0)
     ap.add_argument("--i-lim", type=float, default=None, help="Limite de corriente del PCR [A]")
@@ -464,7 +507,9 @@ def main(argv=None):
         fluke = None
     else:
         pcr, dmm = ins.FuentePCR(args.pcr), ins.MultimetroDMM(args.dmm)
-        fluke = ins.Fluke43B(args.fluke) if args.fluke else None
+        fluke = ins.Fluke43B(args.fluke) if (args.fluke and args.fluke_python) else None
+        if args.fluke and not args.fluke_python and not args.fluke_exe.exists():
+            raise SystemExit(f"No existe {args.fluke_exe}; use --fluke-python")
     if args.verificar:
         return verificar_banco(args, pcr, dmm, v_max, f_min, f_max)
 

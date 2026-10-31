@@ -83,7 +83,14 @@ def leer_sd(ruta, dut=None):
 
 
 def leer_fluke(ruta):
-    fl = pd.read_csv(ruta, dtype=str, encoding="utf-8-sig")
+    # csv tolera una ultima linea truncada si el registrador se detuvo escribiendo.
+    import csv as _csv
+    with open(ruta, encoding="utf-8-sig", newline="") as fh:
+        filas = list(_csv.reader(fh))
+    if not filas:
+        return pd.DataFrame(), {}
+    cab = filas[0]
+    fl = pd.DataFrame([f for f in filas[1:] if len(f) == len(cab)], columns=cab, dtype=str)
     fl = fl[fl["measurement"].isin(FLUKE_MAPA) & fl["value"].notna() & (fl["valid"] == "1")]
     if fl.empty:
         return pd.DataFrame(), {}
@@ -293,7 +300,7 @@ def decidir(e_medio, U, L):
 # Emparejamiento y estadistica por punto
 # --------------------------------------------------------------------------
 
-def referencia_en(t_dut, t_ref, valores, semiventana=1.0, maximo=2.5):
+def referencia_en(t_dut, t_ref, valores, semiventana=1.0, maximo=3.5):
     """Promedio de la referencia en +/-semiventana; si no hay, la mas cercana."""
     out = np.full(len(t_dut), np.nan)
     finitos = np.isfinite(valores)

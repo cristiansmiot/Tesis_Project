@@ -127,6 +127,7 @@ class MultimetroDMM:
     def configurar(self, modo, rango, frecuencia_secundaria=True):
         """modo: 'ACV' (rango 100 o 750 V) o 'ACI' (rango 1 o 10 A)."""
         w = self.inst.write
+        w("*RST")  # unica forma de apagar la funcion secundaria del 34450A
         w("*CLS")
         if modo == "ACV":
             w(f"CONFigure:VOLTage:AC {rango}")

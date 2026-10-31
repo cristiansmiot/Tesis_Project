@@ -136,7 +136,11 @@
 #define METER_SD_BACKLOG_FILE                  METER_SD_TELEMETRY_QUEUE_FILE
 #define METER_SD_ALERT_BACKLOG_FILE            METER_SD_ALERT_QUEUE_FILE
 #define METER_SD_BACKLOG_DRAIN_PER_CYCLE       8U
+// Sobrescribible desde platformio.ini: el perfil de metrologia registra mas
+// rapido para reunir 30 pares por punto sin alargar cada escalon.
+#ifndef METER_SD_HISTORY_PERIOD_MS
 #define METER_SD_HISTORY_PERIOD_MS             60000U
+#endif
 #define METER_SD_USAGE_REFRESH_MS              10000U
 #define METER_SD_ALERT_RESERVE_MB               64U
 #define METER_SD_HISTORY_PURGE_BATCH            256U
@@ -152,7 +156,11 @@
 #define METER_TIME_CELLULAR_RESYNC_MS         21600000U
 
 // Sprint 3 - Comunicaciones SIM7080G + MQTT
+// 0 = sin modem ni MQTT (perfil de metrologia en banco): la tarea de
+// comunicaciones se autoelimina y la microSD queda como unico registro.
+#ifndef METER_COMM_ENABLE
 #define METER_COMM_ENABLE                      1
+#endif
 #define METER_COMM_PUBLISH_PERIOD_MS           60000U
 #define METER_COMM_RECOVERY_RETRY_MS           2000U
 #define METER_COMM_RECOVERY_RETRY_MAX_MS       30000U

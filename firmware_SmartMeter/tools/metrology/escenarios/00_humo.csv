@@ -1,0 +1,8 @@
+# prueba: HUMO
+# descripcion: Prueba de humo de la cadena PCR -> DUT (microSD) -> analisis. Valida montaje, alineacion y lectura de la SD; no es resultado de P01.
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,HUMO,H_120V_60Hz,120,60,60,90,cambio_carga,"Montaje de humo: bombillo LED 15 W por el canal de corriente del medidor; 34450A en paralelo en bornes de tension"
+2,HUMO,H_110V_60Hz,110,60,60,90,,
+3,HUMO,H_120V_61Hz,120,61,60,90,,

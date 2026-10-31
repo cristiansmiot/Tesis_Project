@@ -1,0 +1,8 @@
+# prueba: P02_energia
+# descripcion: PLANTILLA P02 (energia). Requiere cargas resistivas: con 0,1 kWh por corrida, 60 W tarda 100 min y 300 W 20 min. Ajustar medicion_s a la carga real; tres niveles por tres repeticiones (protocolo 7.2). Referencia: integral de P del PCR.
+# dmm_modo: ACV
+# i_lim_a: 4.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,P02,E_bajo_r1,120,60,300,6000,cambio_carga,"Conectar carga resistiva BAJA (~60 W)"
+2,P02,E_medio_r1,120,60,300,3000,cambio_carga,"Conectar carga resistiva MEDIA (~120 W)"
+3,P02,E_alto_r1,120,60,300,1200,cambio_carga,"Conectar carga resistiva ALTA (~300 W)"

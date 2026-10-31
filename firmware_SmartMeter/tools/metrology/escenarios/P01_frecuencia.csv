@@ -1,0 +1,13 @@
+# prueba: P01_frecuencia
+# descripcion: P01 exactitud de frecuencia a 120 V (58 a 62 Hz; limite +/-0,10 Hz). Referencia: frecuencia secundaria del 34450A y consigna del PCR.
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,P01,F60_ini,120,60,180,180,cambio_carga,"Carga fija durante toda la corrida. 34450A en paralelo en bornes de tension del medidor"
+2,P01,F58,120,58,180,180,,
+3,P01,F59,120,59,180,180,,
+4,P01,F59p8,120,59.8,180,180,,
+5,P01,F60p2,120,60.2,180,180,,
+6,P01,F61,120,61,180,180,,
+7,P01,F62,120,62,180,180,,
+8,P01,F60_fin,120,60,180,180,,

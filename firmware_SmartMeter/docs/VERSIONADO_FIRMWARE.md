@@ -238,3 +238,36 @@ Criterios: ≤1 ciclo PDP por corte; ningún barrido de baudios ni PWRKEY con el
 módem respondiendo en los 5 min previos; ninguna secuencia
 CONNECT→DISCONNECT→CONNECT en el broker; primera publicación ≤60 s después de
 que la red vuelve; respaldo SD drenado sin huecos ni duplicados.
+
+Respaldo (31-oct): el binario `1.1.0-mqtt-r2` validado sin supervisión durante
+40 h se copió con bootloader y particiones a
+`evidence/versions/2026-10-31_mqtt-r2-respaldo-binario/`. El de
+`1.1.0-obj4-q1-rc1` no se respaldó y se perdió cuando PlatformIO limpió
+`.pio/build` al cambiar `platformio.ini`. Antes de promoverlo hay que
+recompilarlo desde el commit y registrar su nuevo SHA-256, porque el binario
+incluye la fecha de compilación. **Regla:** respaldar los binarios antes de
+editar `platformio.ini`.
+
+## Metrología en banco — `1.1.0-metro-r1`
+
+Perfil `metrology_sd` (perfil integrado 0):
+
+- **Activos:** ADE9153A, RTC, OLED, NVS y microSD.
+- **Deshabilitados:** celular y MQTT (`METER_COMM_ENABLE=0`). No consume datos ni envía alertas por el aire.
+- **Histórico SD:** cada 5 s (`METER_SD_HISTORY_PERIOD_MS=5000`), para reunir 30 pares por punto de P01 en 2,5 min.
+
+Ajustes sin efecto en los demás perfiles:
+
+- Guardas `#ifndef` para ambos parámetros.
+- La tarea de comunicaciones solo se registra en el supervisor si está habilitada. Antes producía un falso `FAULT_TASK_STALL` a los 5 min.
+- PWRKEY se fija en LOW en lugar de quedar flotante.
+
+| Perfil | Versión | SHA-256 del binario | Bytes |
+|---|---|---|---|
+| `metrology_sd` | `1.1.0-metro-r1` | `9122C746EDDF73C2F5FF771123E43F927ACDA041E77EE653F8DB9AD977D05840` | 442 432 |
+
+Respaldo en `evidence/versions/2026-10-31_metro-r1-build/`. Se graba con
+`tools/metrology/grabar_respaldo.cmd`. Las herramientas de ensayo están en
+`tools/metrology/` (ver su README).
+
+Estado: compilado; pendiente de la prueba de humo en banco.

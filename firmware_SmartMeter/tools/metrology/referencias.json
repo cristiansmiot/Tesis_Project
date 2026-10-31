@@ -1,0 +1,53 @@
+{
+  "_descripcion": "Limites del protocolo Obj. 4 v0.2 (seccion 6) y especificaciones de los instrumentos de referencia. La semiamplitud de cada especificacion es a = pct_lectura*lectura/100 + pct_rango*rango/100 + abs + cuentas*resolucion, y se trata como distribucion rectangular (u = a/raiz(3)). Si hay certificado de calibracion, reemplazar por su incertidumbre y poner verificar=false.",
+  "limites": {
+    "V":  {"tipo": "rel", "L": 1.0,  "unidad": "%"},
+    "I":  {"tipo": "rel", "L": 1.0,  "unidad": "%"},
+    "P":  {"tipo": "rel", "L": 1.5,  "unidad": "%"},
+    "PF": {"tipo": "abs", "L": 0.02, "unidad": ""},
+    "f":  {"tipo": "abs", "L": 0.10, "unidad": "Hz"},
+    "E":  {"tipo": "rel", "L": 1.0,  "unidad": "%"}
+  },
+  "resolucion_dut": {"V": 0.001, "I": 0.0001, "P": 0.001, "PF": 0.0001, "f": 0.001, "E": 0.0001},
+  "minimo_referencia_relativa": {"I": 0.02, "P": 1.0, "E": 0.05},
+  "umbral_acumulacion_sin_carga_wh": 0.001,
+  "asignacion": {
+    "V":  ["dmm_v", "pcr_v", "fluke_v"],
+    "f":  ["dmm_f", "pcr_f_set", "fluke_f"],
+    "I":  ["dmm_i", "pcr_i", "fluke_i"],
+    "P":  ["pcr_p", "fluke_p"],
+    "PF": ["pcr_pf", "fluke_pf"]
+  },
+  "especificaciones": {
+    "dmm_acv_100": {"pct_lectura": 0.2, "pct_rango": 0.1, "rango": 100, "resolucion": 0.001,
+                    "fuente": "Keysight 34450A datasheet 5991-1133EN, ACV 1 ano, 45 Hz-10 kHz", "verificar": false},
+    "dmm_acv_750": {"pct_lectura": 0.2, "pct_rango": 0.1, "rango": 750, "resolucion": 0.01,
+                    "fuente": "Keysight 34450A datasheet 5991-1133EN, ACV 1 ano, 45 Hz-10 kHz", "verificar": false},
+    "dmm_aci_1":   {"pct_lectura": 0.5, "pct_rango": 0.1, "rango": 1, "resolucion": 0.00001,
+                    "fuente": "Keysight 34450A datasheet, ACI 45 Hz-1 kHz; senal sinusoidal", "verificar": false},
+    "dmm_aci_10":  {"pct_lectura": 0.5, "pct_rango": 0.1, "rango": 10, "resolucion": 0.0001,
+                    "fuente": "Keysight 34450A datasheet, ACI 45 Hz-1 kHz; senal sinusoidal", "verificar": false},
+    "dmm_freq":    {"pct_lectura": 0.01, "resolucion": 0.0001,
+                    "fuente": "34450A frecuencia (valor tipico de la serie)", "verificar": true},
+    "pcr_v":       {"pct_lectura": 0.5, "abs": 0.3, "resolucion": 0.1,
+                    "fuente": "Kikusui PCR-MA, rango 155 V, 45-65 Hz", "verificar": false},
+    "pcr_i":       {"pct_lectura": 0.5, "abs": 0.02, "resolucion": 0.01,
+                    "fuente": "Kikusui PCR-MA, rango 155 V, 45-65 Hz", "verificar": false},
+    "pcr_p":       {"pct_lectura": 2.0, "abs": 0.5, "resolucion": 0.1,
+                    "fuente": "Kikusui PCR-MA indicadores, PCR500MA", "verificar": false},
+    "pcr_pf":      {"derivado_de": ["pcr_p", "pcr_v", "pcr_i"],
+                    "fuente": "Kikusui no publica exactitud de FP; se combina P, V e I", "verificar": true},
+    "pcr_f_set":   {"pct_lectura": 0.01, "resolucion": 0.01,
+                    "fuente": "Consigna del PCR-MA (exactitud de frecuencia a confirmar)", "verificar": true},
+    "fluke_v":     {"pct_lectura": 1.0, "cuentas": 10,
+                    "fuente": "Fluke 43B, orden de magnitud citado en protocolo 15.3", "verificar": true},
+    "fluke_i":     {"pct_lectura": 1.0, "cuentas": 10,
+                    "fuente": "Fluke 43B sin la pinza: sumar la especificacion de la pinza usada", "verificar": true},
+    "fluke_f":     {"pct_lectura": 0.5, "cuentas": 2,
+                    "fuente": "Fluke 43B (a confirmar)", "verificar": true},
+    "fluke_p":     {"pct_lectura": 4.0, "cuentas": 4,
+                    "fuente": "Fluke 43B, orden de magnitud citado en protocolo 15.3", "verificar": true},
+    "fluke_pf":    {"abs": 0.04,
+                    "fuente": "Fluke 43B (a confirmar)", "verificar": true}
+  }
+}

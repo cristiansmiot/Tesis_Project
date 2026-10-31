@@ -1,0 +1,12 @@
+# prueba: PQ_eventos
+# descripcion: Exploratorio: hundimientos y elevaciones fuera de la banda +/-10 % de 120 V para revisar la deteccion PQ en events_v1.jsonl y alerts_v1.jsonl de la microSD. Los escalones tambien aportan puntos de tension.
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,PQ,PQ_120_base,120,60,30,60,cambio_carga,"Carga fija (LED 15 W o sin carga)"
+2,PQ,PQ_sag_100,100,60,0,30,,
+3,PQ,PQ_120_a,120,60,0,60,,
+4,PQ,PQ_swell_135,135,60,0,30,,
+5,PQ,PQ_120_b,120,60,0,60,,
+6,PQ,PQ_sag_96,96,60,0,15,,
+7,PQ,PQ_120_c,120,60,0,60,,

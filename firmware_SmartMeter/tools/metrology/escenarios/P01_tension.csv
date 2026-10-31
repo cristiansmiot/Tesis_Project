@@ -1,0 +1,12 @@
+# prueba: P01_tension
+# descripcion: P01 exactitud de tension a 60 Hz (puntos 100 a 132 V, protocolo Obj. 4 sec. 7.1). Estabilizacion 3 min y 36 pares por punto con historico SD de 5 s. El 34450A usa rango 100 V hasta 115 V y 750 V por encima.
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,P01,V120_ini,120,60,180,180,cambio_carga,"Carga fija durante toda la corrida (p.ej. LED 15 W o sin carga). 34450A en paralelo en bornes de tension del medidor"
+2,P01,V100,100,60,180,180,,
+3,P01,V108,108,60,180,180,,
+4,P01,V115,115,60,180,180,,
+5,P01,V127,127,60,180,180,,
+6,P01,V132,132,60,180,180,,
+7,P01,V120_fin,120,60,180,180,,

@@ -139,8 +139,12 @@ esp_err_t task_manager_start(void)
             ++started;
         }
         if (task_communication_start() == ESP_OK) {
-            task_monitor_register(TASK_MON_COMMUNICATION, "comm",
-                                  METER_TASK_HB_TIMEOUT_COMM_MS);
+            // Con METER_COMM_ENABLE=0 la tarea se autoelimina sin latir:
+            // supervisarla produciria un falso FAULT_TASK_STALL.
+            if (METER_COMM_ENABLE) {
+                task_monitor_register(TASK_MON_COMMUNICATION, "comm",
+                                      METER_TASK_HB_TIMEOUT_COMM_MS);
+            }
             ++started;
         } else {
             LOG_ERROR(TAG, "task_communication start failed");

@@ -255,6 +255,9 @@ static void task_communication(void *pvParameters)
 
     if (!METER_COMM_ENABLE) {
         LOG_WARN(TAG, "communication disabled by config");
+        // PWRKEY queda en LOW: sin configurar, el GPIO flotante podria
+        // excitar el transistor del HAT y "presionar" el boton del modem.
+        (void)sim7080g_power_init();
         (void)system_health_set_disabled(SYSTEM_MODULE_SIM_MODEM,
                                          "communication disabled");
         (void)system_health_set_disabled(SYSTEM_MODULE_CELLULAR,

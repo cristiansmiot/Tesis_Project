@@ -1,0 +1,6 @@
+# prueba: P03_sin_carga
+# descripcion: P03 sin carga: tension nominal con el circuito de corriente abierto durante 30 min; se verifica que el acumulador de energia no avance y que no haya falsos positivos de carga (protocolo 7.3).
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,P03,SIN_CARGA_120V,120,60,60,1800,cambio_carga,"Retirar TODA carga: circuito de corriente del medidor abierto. 34450A en paralelo en tension"

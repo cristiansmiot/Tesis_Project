@@ -1,0 +1,10 @@
+# prueba: P01_no_lineal
+# descripcion: P01 punto de carga no lineal con cargas domesticas (LED 15 W y cargador de celular). El FP se reporta como el observado (protocolo 7.1). Con ~0,13 A las referencias de corriente y potencia (PCR +/-0,02 A, +/-0,5 W; pinza del Fluke) dominan la incertidumbre: resultado de comparacion. Para corriente use --dmm-modo ACI --dmm-rango 1 con el 34450A en serie.
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,P01,LED_120V,120,60,300,180,cambio_carga,"Conectar SOLO el bombillo LED OSRAM 15 W a traves del canal de corriente del medidor"
+2,P01,LED_108V,108,60,180,180,,
+3,P01,LED_132V,132,60,180,180,,
+4,P01,CARG_120V,120,60,300,180,cambio_carga,"Retirar el LED. Conectar el cargador de celular CON un celular cargando (no en vacio)"
+5,P01,LED_CARG_120V,120,60,300,180,cambio_carga,"Conectar LED y cargador en paralelo (ambos por el canal de corriente)"

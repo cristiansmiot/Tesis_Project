@@ -645,8 +645,17 @@ cycle_delay:
                 task_monitor_heartbeat(TASK_MON_COMMUNICATION);
 
                 if (mqtt_session_ready) {
-                    const esp_err_t send_err = task_communication_publish_persisted(
-                        STORAGE_RECORD_TELEMETRY, mqtt_topics_datos(), METER_MQTT_PUBLISH_QOS);
+                    /* rc3: las alertas persistidas drenan en este ciclo de 1 s,
+                     * antes que la telemetria. Antes salia una por latido
+                     * (~15 s) y un atraso de ~120 alertas retenia durante mas
+                     * de una hora las de la prueba siguiente (2026-11-04). */
+                    esp_err_t send_err = task_communication_publish_persisted(
+                        STORAGE_RECORD_ALERT, mqtt_topics_alerta(), 1);
+                    if ((send_err == ESP_OK) || (send_err == ESP_ERR_NOT_FOUND)) {
+                        send_err = task_communication_publish_persisted(
+                            STORAGE_RECORD_TELEMETRY, mqtt_topics_datos(),
+                            METER_MQTT_PUBLISH_QOS);
+                    }
                     if ((send_err != ESP_OK) && (send_err != ESP_ERR_NOT_FOUND)) {
                         mqtt_session_ready = false;
                         mqtt_profile_ready = false;

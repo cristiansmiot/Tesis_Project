@@ -1,0 +1,13 @@
+# prueba: INT_AC_carga_rc3
+# descripcion: Puerta de entrada a P05 con q1-rc3 (rc2 + alertas persistidas drenadas en el ciclo de 1 s; perfiles sin comunicaciones no encolan alertas). Mismos pasos que INT_AC_carga_rc2 (run01) con 4 bombillos LED, medidor en cargador de pared, modem encendido. Objetivos: (1) alertas del dispositivo (AC_LOST/AC_RESTORED, SIM/MQTT) en Railway de extremo a extremo, incluido el atraso de 33 alertas de la corrida rc2; (2) 60 min integrados sin perdida neta en /datos y alertas; (3) V post-ajuste contra el 34450A (paso 8 en rango 100 V); (4) eventos PQ en events_v1.jsonl. Historico del DUT cada 60 s.
+# dmm_modo: ACV
+# i_lim_a: 1.5
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,INT,BASE_120,120,60,60,900,cambio_carga,"Medidor SOLO en cargador de pared (sin USB al PC). 4 bombillos LED por el canal de corriente del medidor. 34450A en paralelo en bornes de tension. Antena a 1-2 m del PCR"
+2,PQ,SAG_104,104,60,0,180,,
+3,INT,REC_120_a,120,60,0,180,,
+4,PQ,SWELL_136,136,60,0,180,,
+5,INT,REC_120_b,120,60,0,180,,
+6,PQ,AC_OFF_0V,0,60,0,120,,"Salida del PCR encendida a 0 V: simula falta de AC"
+7,INT,REC_120_c,120,60,0,300,,
+8,P01,VER_115,115,60,15,600,,"Verificacion post-ajuste en el rango 100 V del 34450A (10 muestras del DUT)"

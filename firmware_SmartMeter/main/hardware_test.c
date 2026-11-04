@@ -2454,9 +2454,15 @@ static void hardware_test_run_sd_service(void)
             &s_storage_producer_args[i], 2, s_storage_producer_stack[i],
             &s_storage_producer_tcb[i], tskNO_AFFINITY);
     }
-    const bool producers_done =
-        (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000U)) > 0U) &&
-        (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000U)) > 0U);
+    /* Cada productor hace un xTaskNotifyGive. Con pdTRUE la primera espera
+     * consumia ambas notificaciones y la segunda vencia: falso FAIL que se
+     * repetia desde q1-rc1. Se acumulan hasta contar dos. */
+    uint32_t producers_notified = 0U;
+    const int64_t producers_deadline = esp_timer_get_time() + 10000000LL;
+    while ((producers_notified < 2U) && (esp_timer_get_time() < producers_deadline)) {
+        producers_notified += ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000U));
+    }
+    const bool producers_done = producers_notified >= 2U;
     hardware_test_log_result("SD_SERVICE PRODUCERS", producers_done,
                              "dos productores concurrentes finalizaron");
 

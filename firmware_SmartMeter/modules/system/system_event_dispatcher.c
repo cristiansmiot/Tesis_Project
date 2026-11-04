@@ -133,6 +133,14 @@ static bool persist_alert(const system_event_t *event)
     if (event == NULL) {
         return false;
     }
+    if (!METER_COMM_ENABLE) {
+        /* rc3: sin comunicaciones (perfil de metrologia) nada publicara la
+         * alerta, y encolarla en la SD solo deja un atraso que el firmware
+         * siguiente envia antes que sus propias alertas (19 AC_LOST/RESTORED
+         * de la corrida nocturna con metro-r1). El evento ya quedo en
+         * events_v1.jsonl; se da por atendida sin usar la cola RAM. */
+        return true;
+    }
     char payload[768];
     if (data_serializer_build_senml_system_event(event, payload,
                                                  sizeof(payload)) != ESP_OK) {

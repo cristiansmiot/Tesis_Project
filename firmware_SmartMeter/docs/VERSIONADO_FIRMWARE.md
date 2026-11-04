@@ -294,3 +294,26 @@ está en `evidence/versions/2026-11-04_q1-rc2-build/`, junto a los binarios).
 | `test_sd_service` | perfil 13 | `DE295CAD6A183888DF73B36F2DE36CEA225C7B4B70D30B068A11042F8DBA2E2F` | 504 768 |
 
 Estado: `test_sd_service` en equipo aprobado (salvo `PRODUCERS`, falla preexistente del arnés); q1-rc2 grabado el 2026-11-04 21:03 UTC, AVGAIN verificado y `cal`=16 recibido en Railway. Detalle en `RESULTADOS.txt` de la carpeta de evidencia.
+
+## Candidata para P05 — `1.1.0-obj4-q1-rc3` y `1.1.0-metro-r3`
+
+Cambios respecto de q1-rc2:
+
+- **Alertas persistidas:** salen en el ciclo de 1 s, antes que la telemetría. Antes salía una por latido, unos 15 s. En la corrida `INT_AC_carga_rc2` un atraso de unas 120 alertas retuvo más de una hora las de la prueba.
+- **Perfiles sin comunicaciones** (`METER_COMM_ENABLE=0`): ya no encolan alertas en la SD. El evento sigue en `events_v1.jsonl`.
+- **`test_sd_service`:** se corrigió el conteo de `PRODUCERS`, que daba un falso FAIL desde q1-rc1.
+
+| Perfil | Versión | SHA-256 del binario | Bytes |
+|---|---|---|---|
+| `integration_qos1_rc3` | `1.1.0-obj4-q1-rc3` | `7B65590BDEA10B77393287501888195DE74CF19C1B7FFB1AE113C90CB8D3544B` | 500 928 |
+| `metrology_sd` | `1.1.0-metro-r3` | `4839D95C23828A205B78D9829C28D9963964C6AC8A666E307F40DD223AE85782` | 443 584 |
+| `test_sd_service` | perfil 13 | `3DD8F986AC6AE019B86CE4956C69659DC7F5DC3D539AF251D6D75EE3AA25EA1B` | 504 816 |
+
+Estado:
+
+- `test_sd_service` en equipo: 10/10 PASS.
+- q1-rc3 grabado el 2026-11-04 a las 23:37 UTC (boot 3696470796).
+- Atraso de alertas drenado a una alerta cada ~2,5 s; las alertas pendientes de la corrida rc2 llegaron a Railway.
+- Pendiente: corrida de verificación `INT_AC_carga_rc3` (puerta de entrada a P05).
+
+Evidencia: `evidence/versions/2026-11-04_q1-rc3-build/`.

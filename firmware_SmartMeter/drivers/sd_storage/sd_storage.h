@@ -10,6 +10,11 @@
 extern "C" {
 #endif
 
+/* Longitud maxima de linea para drenado y retencion. Igual a
+ * STORAGE_SERVICE_LINE_MAX: toda linea que el servicio puede leer como
+ * cabeza de cola tambien puede retirarse. */
+#define SD_STORAGE_LINE_MAX 2048U
+
 /**
  * @brief Inicializa o reutiliza SPI2_HOST compartido y monta la SD con FATFS.
  *
@@ -65,10 +70,27 @@ esp_err_t sd_storage_ensure_dir(const char *relpath);
 /** Recupera un reemplazo interrumpido (.tmp/.bak) para una ruta relativa. */
 esp_err_t sd_storage_recover_file(const char *relpath);
 
-/** Lee la primera linea completa sin retirarla. */
+/**
+ * Lee la primera linea no vacia sin retirarla (la misma que retira
+ * sd_storage_drop_first_line).
+ * @return ESP_OK; ESP_ERR_NOT_FOUND si el archivo no existe o no tiene lineas;
+ *         ESP_ERR_INVALID_SIZE si la linea no cabe en out o esta truncada;
+ *         ESP_FAIL ante un error de lectura de la tarjeta.
+ */
 esp_err_t sd_storage_peek_line(const char *relpath,
                                char *out,
                                size_t out_len);
+
+/**
+ * Renombra un archivo a <relpath>.badN (N = 1..9, el primero libre) sin
+ * borrar nada. Se usa cuando la cabeza de una cola no puede leerse ni
+ * retirarse. out_name recibe la ruta relativa nueva (puede ser NULL).
+ * @return ESP_OK; ESP_ERR_NOT_FOUND si no existe; ESP_ERR_NO_MEM si ya hay
+ *         nueve archivos en cuarentena; ESP_FAIL si el renombrado falla.
+ */
+esp_err_t sd_storage_quarantine_file(const char *relpath,
+                                     char *out_name,
+                                     size_t out_name_len);
 
 /** Retira de forma recuperable la primera linea de un archivo. */
 esp_err_t sd_storage_drop_first_line(const char *relpath,

@@ -2293,6 +2293,72 @@ static void hardware_test_storage_producer(void *arg)
     vTaskDelete(NULL);
 }
 
+/* q1-rc2: cabezas de cola que antes detenian la entrega en silencio.
+ * Telemetria: linea vacia + JSON truncado + registro valido -> el servicio
+ * debe retirar el truncado y reclamar el valido. Alertas: linea de 2100 B
+ * (mayor que el buffer de 2048) -> la cola debe pasar a cuarentena .badN.
+ * Solo toca METER_SD_BASE_DIR (codex_sd_test en este perfil). */
+#define HW_TEST_HEAD_OK_PAYLOAD "[{\"n\":\"head_ok\",\"v\":1}]"
+static bool s_queue_heads_seeded;
+
+static void hardware_test_seed_queue_heads(void)
+{
+    (void)sd_storage_remove_file(METER_SD_TELEMETRY_QUEUE_FILE);
+    (void)sd_storage_remove_file(METER_SD_ALERT_QUEUE_FILE);
+    for (unsigned n = 1U; n <= 9U; ++n) {
+        char bad[96];
+        (void)snprintf(bad, sizeof(bad), "%s.bad%u", METER_SD_ALERT_QUEUE_FILE, n);
+        (void)sd_storage_remove_file(bad);
+    }
+    static char long_line[2101];
+    (void)memset(long_line, 'x', sizeof(long_line) - 1U);
+    long_line[0] = '[';
+    long_line[sizeof(long_line) - 2U] = ']';
+    long_line[sizeof(long_line) - 1U] = '\0';
+    s_queue_heads_seeded =
+        (sd_storage_append_line(METER_SD_TELEMETRY_QUEUE_FILE, "") == ESP_OK) &&
+        (sd_storage_append_line(METER_SD_TELEMETRY_QUEUE_FILE,
+            "{\"v\":1,\"type\":\"telemetry_pending\",\"payload\":[{\"n\":\"cut\"") == ESP_OK) &&
+        (sd_storage_append_line(METER_SD_TELEMETRY_QUEUE_FILE,
+                                HW_TEST_HEAD_OK_PAYLOAD) == ESP_OK) &&
+        (sd_storage_append_line(METER_SD_ALERT_QUEUE_FILE, long_line) == ESP_OK) &&
+        (sd_storage_append_line(METER_SD_ALERT_QUEUE_FILE,
+                                "[{\"n\":\"after_long\",\"v\":1}]") == ESP_OK);
+}
+
+static void hardware_test_check_queue_heads(void)
+{
+    storage_service_snapshot_t snapshot = {0};
+    static char head[STORAGE_SERVICE_PAYLOAD_MAX];
+    bool head_ok = false;
+    const int64_t deadline = esp_timer_get_time() + 5000000LL;
+    do {
+        hardware_test_delay(100U);
+        (void)storage_service_get_snapshot(&snapshot);
+        head_ok = (storage_service_peek_pending(STORAGE_RECORD_TELEMETRY, head,
+                                                sizeof(head)) == ESP_OK) &&
+                  (strcmp(head, HW_TEST_HEAD_OK_PAYLOAD) == 0);
+    } while ((!head_ok || (snapshot.queue_files_quarantined == 0U)) &&
+             (esp_timer_get_time() < deadline));
+    char bad1[96];
+    (void)snprintf(bad1, sizeof(bad1), "%s.bad1", METER_SD_ALERT_QUEUE_FILE);
+    uint64_t bad_size = 0U;
+    const bool bad_exists = sd_storage_get_file_size(bad1, &bad_size) == ESP_OK;
+    LOG_INFO(TAG, "SD_SERVICE HEAD seeded=%u head_ok=%u discarded=%lu quarantined=%lu bad1=%u (%llu B)",
+             (unsigned)s_queue_heads_seeded, (unsigned)head_ok,
+             (unsigned long)snapshot.queue_heads_discarded,
+             (unsigned long)snapshot.queue_files_quarantined,
+             (unsigned)bad_exists, (unsigned long long)bad_size);
+    hardware_test_log_result("SD_SERVICE HEAD_DISCARD",
+                             s_queue_heads_seeded && head_ok &&
+                             (snapshot.queue_heads_discarded >= 1U),
+                             "linea vacia y JSON truncado retirados; siguiente registro reclamado");
+    hardware_test_log_result("SD_SERVICE HEAD_QUARANTINE",
+                             s_queue_heads_seeded &&
+                             (snapshot.queue_files_quarantined >= 1U) && bad_exists,
+                             "cabeza > 2048 B: cola renombrada a .bad1 sin borrar datos");
+}
+
 static void hardware_test_run_sd_service(void)
 {
     bool recovery_ok = false;
@@ -2312,6 +2378,7 @@ static void hardware_test_run_sd_service(void)
                                                  sizeof(readback)) == ESP_OK) &&
                           (strcmp(readback, recovery_line) == 0);
         }
+        hardware_test_seed_queue_heads();
         (void)sd_storage_deinit();
     }
     hardware_test_log_result("SD_SERVICE TMP", recovery_ok,
@@ -2335,6 +2402,7 @@ static void hardware_test_run_sd_service(void)
     hardware_test_log_result("SD_SERVICE MOUNT", snapshot.mounted,
                              snapshot.mounted ? "montaje y capacidad disponibles"
                                               : "SD no montada en 15 s");
+    hardware_test_check_queue_heads();
 
     const char invalid_payload[] = "[{\"n\":\"time_invalid\",\"v\":1}]";
     const uint32_t writes_before_invalid = snapshot.writes_ok;

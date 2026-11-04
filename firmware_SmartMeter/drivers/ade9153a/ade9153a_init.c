@@ -11,6 +11,7 @@
 static const char *TAG = "ade9153a_init";
 static bool s_initialized;
 static ade9153a_diag_t s_last_diag;
+static volatile bool s_bench_avgain_active;
 
 // Valores base de referencia: ADE9153AAPI.h (Analog Devices).
 static const uint16_t k_ai_pgagain_default = 0x000AU;  // Senal en IAN, ganancia 16x.
@@ -307,6 +308,42 @@ static esp_err_t ade9153a_apply_defaults(void)
 }
 
 /**
+ * @brief Escribe el ajuste de ganancia de tension de banco y lo verifica.
+ *
+ * AVGAIN pertenece a la memoria del DSP y vuelve a 0 con cada reset, por eso
+ * se aplica en cada inicializacion o recuperacion, con el DSP ya en marcha
+ * (igual que la ruta mSure). Un fallo no detiene la medicion: la unidad queda
+ * sin ajuste, se informa en el log y el bit CALIB_STATUS_BENCH no se publica.
+ */
+static void ade9153a_apply_bench_gain(void)
+{
+    s_bench_avgain_active = false;
+    if (METER_ADE_AVGAIN_BENCH == 0L) {
+        return;
+    }
+    const uint32_t target = (uint32_t)(int32_t)METER_ADE_AVGAIN_BENCH;
+    uint32_t readback = 0U;
+    for (unsigned attempt = 1U; attempt <= 3U; ++attempt) {
+        readback = 0U;
+        if ((ade9153a_write_reg32(ADE9153A_REG_AVGAIN, target) == ESP_OK) &&
+            (ade9153a_read_reg32(ADE9153A_REG_AVGAIN, &readback) == ESP_OK) &&
+            (readback == target)) {
+            s_bench_avgain_active = true;
+            LOG_INFO(TAG, "AVGAIN de banco aplicado y verificado: %ld (intento %u)",
+                     (long)METER_ADE_AVGAIN_BENCH, attempt);
+            return;
+        }
+    }
+    LOG_WARN(TAG, "AVGAIN de banco no verificado (leido 0x%08lx, esperado 0x%08lx): "
+             "tension sin ajuste", (unsigned long)readback, (unsigned long)target);
+}
+
+bool ade9153a_bench_gain_active(void)
+{
+    return s_bench_avgain_active;
+}
+
+/**
  * @brief Aplica configuracion base y arranca DSP (sin reset previo).
  * @return ESP_OK en caso de exito.
  */
@@ -330,6 +367,7 @@ static esp_err_t ade9153a_configure_and_start(void)
         return err;
     }
 
+    ade9153a_apply_bench_gain();
     s_initialized = true;
     s_last_diag.initialized = true;
     return ESP_OK;

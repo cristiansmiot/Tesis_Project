@@ -154,22 +154,48 @@ def ncc_enmascarada(x, mx, y, my):
 
 
 def r_directo(up, dut_val, t_ref, ref_val, c):
+    """Correlacion DUT-referencia para el offset c. Los NaN (muestras sin
+    validez, p. ej. frecuencia sin tension) quedan fuera del calculo."""
     t = up + c
-    m = (t >= t_ref[0]) & (t <= t_ref[-1])
+    m = (t >= t_ref[0]) & (t <= t_ref[-1]) & np.isfinite(dut_val)
+    yr = np.full(len(t), np.nan)
+    yr[m] = np.interp(t[m], t_ref, ref_val)
+    m &= np.isfinite(yr)
     if m.sum() < 8:
         return -1.0, int(m.sum())
-    yr = np.interp(t[m], t_ref, ref_val)
-    if np.std(yr) < 1e-9 or np.std(dut_val[m]) < 1e-9:
+    if np.std(yr[m]) < 1e-9 or np.std(dut_val[m]) < 1e-9:
         return -1.0, int(m.sum())
-    return float(np.corrcoef(dut_val[m], yr)[0, 1]), int(m.sum())
+    return float(np.corrcoef(dut_val[m], yr[m])[0, 1]), int(m.sum())
+
+
+# Por debajo de esta tension no hay frecuencia valida: el DUT informa 0 Hz y
+# la consigna del PCR sigue en 60 Hz (pasos ACOFF) o vale 0 (filas de inicio
+# con la salida apagada). Incluir esas muestras hundia la correlacion de f
+# (score 0,50 en NOCHE_12h_metro y INT_AC_carga run03 con r_V = 0,98).
+V_MIN_FRECUENCIA = 50.0
+
+
+def senales_alineacion(b, ref):
+    """Pares (nombre, serie DUT, serie referencia) para alinear; NaN = no valida."""
+    señales = [("vrms", b["vrms"].to_numpy(dtype=float),
+                ref["pcr_v"].to_numpy(dtype=float))]
+    # Durante la rampa inicial el PCR ya entrega tension pero f_set se registra
+    # como 0 (sin consigna aun): esas filas tampoco son referencia de f.
+    f_set = ref["pcr_f_set"].to_numpy(dtype=float)
+    ref_con_tension = (ref["pcr_v"].to_numpy(dtype=float) >= V_MIN_FRECUENCIA) & (f_set > 0)
+    f_ref = np.where(ref_con_tension, f_set, np.nan)
+    # Solo aporta si la consigna de frecuencia realmente varia con tension.
+    if np.isfinite(f_ref).sum() > 8 and np.nanstd(f_ref) > 0.05:
+        f_dut = np.where(b["vrms"].to_numpy(dtype=float) >= V_MIN_FRECUENCIA,
+                         b["f_hz"].to_numpy(dtype=float), np.nan)
+        señales.append(("f_hz", f_dut, f_ref))
+    return señales
 
 
 def alinear_boot(b, ref, ventana_rtc_s=120.0):
     """Devuelve dict con offset c (t_pc = uptime_s + c), score y diagnostico."""
     t_ref = ref["t"].to_numpy()
-    señales = [("vrms", "pcr_v")]
-    if ref["pcr_f_set"].std() > 0.05:
-        señales.append(("f_hz", "pcr_f_set"))
+    señales = senales_alineacion(b, ref)
     up = b["up_s"].to_numpy()
     periodo = float(np.median(np.diff(up))) if len(up) > 2 else 5.0
     validos = b[b["time_valid"] & (b["timestamp_utc"] > 0)]
@@ -182,12 +208,12 @@ def alinear_boot(b, ref, ventana_rtc_s=120.0):
     if nx > 4_000_000:
         raise ValueError("boot demasiado largo para la rejilla de 1 s")
     r_total = None
-    for col_dut, col_ref in señales:
+    for _, serie_dut, serie_ref in señales:
         x, mx = np.zeros(nx), np.zeros(nx, bool)
         idx = np.rint(up - ux0).astype(int)
-        x[idx], mx[idx] = b[col_dut].to_numpy(), True
+        x[idx], mx[idx] = serie_dut, True
         mx &= np.isfinite(x)
-        y = np.interp(np.arange(ny) + ty0, t_ref, ref[col_ref].to_numpy())
+        y = np.interp(np.arange(ny) + ty0, t_ref, serie_ref)
         my = np.isfinite(y)
         k, r, nn = ncc_enmascarada(np.nan_to_num(x), mx, np.nan_to_num(y), my)
         # Cobertura: al menos 60 % del maximo solape posible entre DUT y corrida.
@@ -204,11 +230,11 @@ def alinear_boot(b, ref, ventana_rtc_s=120.0):
     finos = np.arange(c0 - 2.0, c0 + 2.0001, 0.1)
     puntajes = []
     for c in finos:
-        rs = [r_directo(up, b[cd].to_numpy(), t_ref, ref[cr].to_numpy(), c)[0] for cd, cr in señales]
+        rs = [r_directo(up, sd_, t_ref, sr_, c)[0] for _, sd_, sr_ in señales]
         puntajes.append(np.mean(rs))
     j = int(np.argmax(puntajes))
     c_fino = float(finos[j])
-    r_v, n_sol = r_directo(up, b["vrms"].to_numpy(), t_ref, ref["pcr_v"].to_numpy(), c_fino)
+    r_v, n_sol = r_directo(up, señales[0][1], t_ref, señales[0][2], c_fino)
     return {"boot_id": int(b["boot_id"].iloc[0]), "offset_s": c_fino, "score": float(puntajes[j]),
             "score_grueso": score0, "r_v": r_v, "muestras_solapadas": n_sol,
             "periodo_dut_s": periodo, "rtc_valido": c_rtc is not None,

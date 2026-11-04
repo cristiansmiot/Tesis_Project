@@ -56,7 +56,7 @@ REF_CAMPOS = ["t_utc", "t_epoch", "t_rel_s", "paso", "tipo", "etiqueta", "fase",
               "pcr_crudo"]
 PASO_CAMPOS = ["paso", "tipo", "etiqueta", "v_set", "f_set", "estabilizacion_s",
                "medicion_s", "accion", "nota", "t_inicio_utc", "t_inicio",
-               "t_medicion", "t_fin", "dmm_modo", "dmm_rango"]
+               "t_medicion", "t_fin", "dmm_modo", "dmm_rango", "t_cambio"]
 
 
 @dataclass
@@ -327,6 +327,12 @@ class Corrida:
                 else:
                     with self.visa:
                         self.pcr.fijar(p.v, p.f)
+                # Instante en que el PCR ya aplico la consigna. t_inicio se
+                # toma despues del cambio de rango del DMM, que puede esperar
+                # el bloqueo VISA hasta ~9 s (READ? con frecuencia secundaria);
+                # t_cambio sirve para medir latencias del DUT (p. ej. AC_LOST)
+                # sin alterar las ventanas de medicion existentes.
+                t_cambio = time.time()
                 self.asegurar_dmm(p.v)
                 t_ini = time.time()
                 self.estado.actualizar(paso=p.paso, tipo=p.tipo, etiqueta=p.etiqueta,
@@ -344,7 +350,8 @@ class Corrida:
                              "medicion_s": p.med_s, "accion": p.accion, "nota": p.nota,
                              "t_inicio_utc": ahora_iso(t_ini), "t_inicio": f"{t_ini:.3f}",
                              "t_medicion": f"{t_med:.3f}", "t_fin": f"{t_fin:.3f}",
-                             "dmm_modo": self.dmm_cfg[0], "dmm_rango": self.dmm_cfg[1]})
+                             "dmm_modo": self.dmm_cfg[0], "dmm_rango": self.dmm_cfg[1],
+                             "t_cambio": f"{t_cambio:.3f}"})
                 pasos_csv.flush()
             return "completa" if not self.parar.is_set() else "interrumpida"
         except KeyboardInterrupt:

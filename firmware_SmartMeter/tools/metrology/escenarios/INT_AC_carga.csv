@@ -1,0 +1,12 @@
+# prueba: INT_AC_carga
+# descripcion: Integracion con AC y carga (q1-rc1, SD 16 GB, medidor en cargador de pared, modem encendido). Objetivos: (1) SD sin errores con AC aplicada; (2) /datos con V, I y P reales en Railway; (3) alertas SAG (<108 V), SWELL (>132 V) y perdida/retorno de AC de extremo a extremo. Historico del DUT cada 60 s: comportamiento, no resultado metrologico.
+# dmm_modo: ACV
+# i_lim_a: 1.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,INT,BASE_120,120,60,60,900,cambio_carga,"Medidor SOLO en cargador de pared (sin USB al PC). LED OSRAM 15 W por el canal de corriente del medidor. 34450A en paralelo en bornes de tension. Fluke en V/A/Hz"
+2,PQ,SAG_104,104,60,0,180,,
+3,INT,REC_120_a,120,60,0,180,,
+4,PQ,SWELL_136,136,60,0,180,,
+5,INT,REC_120_b,120,60,0,180,,
+6,PQ,AC_OFF_0V,0,60,0,120,,"Salida del PCR encendida a 0 V: simula falta de AC"
+7,INT,REC_120_c,120,60,0,300,,

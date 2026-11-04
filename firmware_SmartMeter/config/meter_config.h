@@ -72,6 +72,17 @@
 #define METER_RSMALL_OHM          1000.0f
 #define METER_RBIG_OHM            1000000.0f
 
+// Ajuste de ganancia del canal de tension (registro AVGAIN del ADE9153A).
+// Ganancia efectiva = 1 + AVGAIN / 2^27. Se escribe en cada inicializacion y
+// recuperacion del ADE; una calibracion mSure persistida en NVS la sustituye.
+// Origen del valor (unidad SM-348518435344, EV-ADE9153ASHIELDZ): corrida
+// NOCHE_12h_metro_20261103_run01, 18 ciclos contra Keysight 34450A en el rango
+// ACV 100 V (U = 0,34 %): error medio del DUT +0,265 % en 100/108/115 V.
+// AVGAIN = round((1/1,00265 - 1) * 2^27) = -354737. 0 = sin ajuste.
+#ifndef METER_ADE_AVGAIN_BENCH
+#define METER_ADE_AVGAIN_BENCH    (-354737L)
+#endif
+
 // Umbrales PQ
 #define METER_SAG_THRESHOLD_PCT   0.10f
 #define METER_SWELL_THRESHOLD_PCT 0.10f

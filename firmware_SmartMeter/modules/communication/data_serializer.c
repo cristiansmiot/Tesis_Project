@@ -289,10 +289,13 @@ esp_err_t data_serializer_build_senml_estado(const MeterData_t *snap,
     const double bt = 0.0;
     const esp_reset_reason_t reset_reason = esp_reset_reason();
 
+    // Sin "online": siempre valia true y el backend ya lo asume por defecto
+    // (data.get("online", True)). /estado rondaba 1014 de los 1024 bytes que
+    // acepta SMPUB y los contadores crecen con el uptime; estos 25 bytes
+    // evitan que el mensaje se rechace por tamano en corridas largas.
     const int len = snprintf(
         out, out_len,
         "[{\"bn\":\"urn:dev:serial:%s:/\",\"bt\":%.3f},"
-        "{\"n\":\"online\",\"vb\":true},"
         "{\"n\":\"ac\",\"vb\":%s},"
         "{\"n\":\"carga\",\"vb\":%s},"
         "{\"n\":\"red_cel\",\"vb\":%s},"

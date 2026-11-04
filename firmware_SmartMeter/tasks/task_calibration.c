@@ -1,6 +1,7 @@
 #include "task_calibration.h"
 
 #include <string.h>
+#include "ade9153a_init.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,7 +24,12 @@ static void task_calibration_set_status(uint8_t status)
 
 uint8_t task_calibration_get_status(void)
 {
-    return s_calib_status;
+    uint8_t status = s_calib_status;
+    // mSure escribe su propio AVGAIN; el ajuste de banco solo rige sin el.
+    if (((status & CALIB_STATUS_LOADED) == 0U) && ade9153a_bench_gain_active()) {
+        status = (uint8_t)(status | CALIB_STATUS_BENCH);
+    }
+    return status;
 }
 
 static bool task_calibration_record_is_valid(const nvm_calib_record_t *record)

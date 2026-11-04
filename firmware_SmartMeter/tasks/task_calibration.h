@@ -20,6 +20,9 @@
 #define CALIB_STATUS_VALID     (1U << 1)
 #define CALIB_STATUS_PERSISTED (1U << 2)
 #define CALIB_STATUS_LOADED    (1U << 3)
+// Ajuste de ganancia de tension de banco (METER_ADE_AVGAIN_BENCH) activo y
+// verificado. Solo se informa cuando no hay calibracion mSure cargada.
+#define CALIB_STATUS_BENCH     (1U << 4)
 #define CALIB_STATUS_ERROR     (1U << 7)
 
 /**

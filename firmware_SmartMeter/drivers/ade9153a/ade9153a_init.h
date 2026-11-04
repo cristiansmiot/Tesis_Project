@@ -86,4 +86,10 @@ esp_err_t ade9153a_get_diag(ade9153a_diag_t *out);
  */
 esp_err_t ade9153a_recover(ade9153a_recovery_action_t action);
 
+/**
+ * @brief Indica si el AVGAIN de banco (METER_ADE_AVGAIN_BENCH) quedo escrito
+ *        y verificado en la ultima inicializacion o recuperacion del ADE.
+ */
+bool ade9153a_bench_gain_active(void);
+
 #endif // ADE9153A_INIT_H

@@ -112,7 +112,15 @@ static esp_err_t task_communication_publish_persisted(storage_record_kind_t kind
                                                  int qos)
 {
     char line[STORAGE_SERVICE_PAYLOAD_MAX];
-    if (storage_service_peek_pending(kind, line, sizeof(line)) != ESP_OK) {
+    const esp_err_t peek_err = storage_service_peek_pending(kind, line, sizeof(line));
+    if (peek_err == ESP_ERR_INVALID_SIZE) {
+        /* Cabeza mayor que el buffer de publicacion: nunca saldra. Retirarla
+         * evita que la cola quede detenida en silencio. */
+        LOG_WARN(TAG, "queued record larger than publish buffer - discarding");
+        (void)storage_service_ack_pending(kind);
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (peek_err != ESP_OK) {
         return ESP_ERR_NOT_FOUND;
     }
     if (kind == STORAGE_RECORD_TELEMETRY) { node_health_data_publish_attempt_inc(); }
@@ -121,9 +129,11 @@ static esp_err_t task_communication_publish_persisted(storage_record_kind_t kind
         if (kind == STORAGE_RECORD_TELEMETRY) { node_health_msg_tx_inc(); }
         const esp_err_t ack_err = storage_service_ack_pending(kind);
         if (ack_err != ESP_OK) {
+            /* El broker ya recibio el registro: el fallo es local de la SD y
+             * no debe disparar una recuperacion MQTT. Se reenviara (duplicado
+             * idempotente en el backend por boot_id/seq). */
             LOG_WARN(TAG, "published record remains queued: SD ack err=%s",
                      esp_err_to_name(ack_err));
-            return ack_err;
         }
     }
     return err;

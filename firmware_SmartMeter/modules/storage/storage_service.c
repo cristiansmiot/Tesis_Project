@@ -62,8 +62,13 @@ static bool s_telemetry_claimed;
 static bool s_alert_claimed;
 static bool s_telemetry_ack_queued;
 static bool s_alert_ack_queued;
-static bool s_telemetry_head_invalid;
-static bool s_alert_head_invalid;
+/* Errores de lectura consecutivos de la cabeza de cada cola (0 = telemetria,
+ * 1 = alertas). Sobreviven al remontaje para acotar el ciclo de recuperacion. */
+static uint8_t s_head_read_failures[2];
+/* true desde que un montaje u operacion falla hasta el siguiente montaje
+ * exitoso. Mientras tanto las alertas no se encolan para la SD (la tarea no
+ * drena colas sin tarjeta) y el despachador usa su cola RAM de envio en vivo. */
+static volatile bool s_sd_unavailable;
 static uint32_t s_mount_failures;
 static int64_t s_next_mount_ms;
 static bool s_queue_overflow_reported;
@@ -180,6 +185,12 @@ esp_err_t storage_service_submit_telemetry(const char *json_payload)
 
 esp_err_t storage_service_submit_alert(const char *json_payload)
 {
+    /* Sin SD la alerta quedaria varada en la cola de solicitudes hasta un
+     * remontaje que puede no llegar. El error hace que el despachador la
+     * conserve en su cola RAM y la publique en vivo. */
+    if (s_sd_unavailable) {
+        return ESP_ERR_INVALID_STATE;
+    }
     return storage_enqueue(STORAGE_REQ_ALERT, json_payload, true);
 }
 
@@ -318,6 +329,9 @@ static void storage_schedule_recovery(esp_err_t err, const char *detail)
     (void)sd_storage_deinit();
     sd_storage_invalidate();
     storage_set_mounted(false);
+    /* Antes de informar la falla: la propia alerta "SD ... failed" debe ir
+     * por la cola RAM del despachador, no a una cola que ya no se drena. */
+    s_sd_unavailable = true;
     ++s_mount_failures;
     uint32_t delay_ms = SYSTEM_RECOVERY_SLOW_PROBE_MS;
     if (s_mount_failures == 1U) {
@@ -374,7 +388,21 @@ static bool storage_try_mount(void)
     s_mount_failures = 0U;
     s_next_mount_ms = 0;
     s_queue_overflow_reported = false;
+    /* Tras un remontaje (p. ej. tarjeta reinsertada) la cabeza en RAM puede no
+     * coincidir con la primera linea del archivo: se vuelve a leer. Una cabeza
+     * con ACK ya encolado se conserva para no retirar la linea equivocada. */
+    storage_lock();
+    if (!s_telemetry_ack_queued) {
+        s_telemetry_claimed = false;
+        s_telemetry_head[0] = '\0';
+    }
+    if (!s_alert_ack_queued) {
+        s_alert_claimed = false;
+        s_alert_head[0] = '\0';
+    }
+    storage_unlock();
     storage_set_mounted(true);
+    s_sd_unavailable = false;
     (void)system_health_report_ok(SYSTEM_MODULE_SD, "SD mounted and recovered");
     return true;
 }
@@ -563,6 +591,77 @@ static esp_err_t storage_extract_payload(const char *line, char *out, size_t out
     return ESP_OK;
 }
 
+static const char *storage_kind_name(storage_record_kind_t kind)
+{
+    return (kind == STORAGE_RECORD_ALERT) ? "alert" : "telemetry";
+}
+
+/* La cola completa pasa a <archivo>.badN (nada se borra). Ultimo recurso
+ * cuando la cabeza no puede leerse ni retirarse: sin esto la cola quedaba
+ * detenida en silencio (soak 2026-11-02). La telemetria sigue disponible en
+ * el archivo de auditoria para recuperacion manual. */
+static esp_err_t storage_quarantine_queue(storage_record_kind_t kind,
+                                          const char *path)
+{
+    char name[64] = {0};
+    const esp_err_t err = sd_storage_quarantine_file(path, name, sizeof(name));
+    if (err == ESP_ERR_NOT_FOUND) {
+        return ESP_OK;
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+    storage_lock();
+    if (kind == STORAGE_RECORD_ALERT) {
+        s_snapshot.alerts_pending = 0U;
+    } else {
+        s_snapshot.telemetry_pending = 0U;
+    }
+    ++s_snapshot.queue_files_quarantined;
+    storage_unlock();
+    char detail[SYSTEM_EVENT_DETAIL_LEN];
+    (void)snprintf(detail, sizeof(detail), "%s queue quarantined",
+                   storage_kind_name(kind));
+    LOG_ERROR(TAG, "%s: %s -> %s", detail, path, name);
+    (void)system_health_report_occurrence(
+        SYSTEM_MODULE_SD, SYSTEM_EVENT_DATA_LOSS, SYSTEM_SEVERITY_CRITICAL,
+        ESP_ERR_INVALID_RESPONSE, detail);
+    return ESP_OK;
+}
+
+/* Retira una cabeza que nunca podra publicarse (JSON truncado o linea mas
+ * larga que el buffer). Antes quedaba sin reclamar y la cola parecia vacia
+ * para siempre. Si tampoco puede retirarse, la cola pasa a cuarentena. */
+static esp_err_t storage_discard_head(storage_record_kind_t kind,
+                                      const char *path,
+                                      const char *reason)
+{
+    size_t remaining = 0U;
+    const esp_err_t err = sd_storage_drop_first_line(path, &remaining);
+    if (err == ESP_ERR_INVALID_SIZE) {
+        return storage_quarantine_queue(kind, path);
+    }
+    if ((err != ESP_OK) && (err != ESP_ERR_NOT_FOUND)) {
+        return err;
+    }
+    storage_lock();
+    if (kind == STORAGE_RECORD_ALERT) {
+        s_snapshot.alerts_pending = (uint32_t)remaining;
+    } else {
+        s_snapshot.telemetry_pending = (uint32_t)remaining;
+    }
+    ++s_snapshot.queue_heads_discarded;
+    storage_unlock();
+    char detail[SYSTEM_EVENT_DETAIL_LEN];
+    (void)snprintf(detail, sizeof(detail), "%s head discarded: %s",
+                   storage_kind_name(kind), reason);
+    LOG_WARN(TAG, "%s (%s, quedan %u)", detail, path, (unsigned)remaining);
+    (void)system_health_report_occurrence(
+        SYSTEM_MODULE_SD, SYSTEM_EVENT_DATA_LOSS, SYSTEM_SEVERITY_WARNING,
+        ESP_ERR_INVALID_RESPONSE, detail);
+    return ESP_OK;
+}
+
 static esp_err_t storage_refresh_head(storage_record_kind_t kind)
 {
     char *const line = s_line_scratch;
@@ -571,24 +670,49 @@ static esp_err_t storage_refresh_head(storage_record_kind_t kind)
     if (path == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    const size_t idx = (kind == STORAGE_RECORD_ALERT) ? 1U : 0U;
+    storage_lock();
+    const bool already_claimed = (kind == STORAGE_RECORD_ALERT)
+        ? s_alert_claimed : s_telemetry_claimed;
+    storage_unlock();
+    if (already_claimed) {
+        /* La cabeza ya esta en RAM hasta su ACK; releer la tarjeta cada 50 ms
+         * solo agregaba trafico al bus SPI compartido con el ADE. */
+        return ESP_OK;
+    }
+
     const esp_err_t err = sd_storage_peek_line(path, line,
                                                STORAGE_SERVICE_LINE_MAX);
-    bool available = false;
-    bool invalid = (err == ESP_ERR_INVALID_SIZE);
-    if (err == ESP_OK) {
-        available = (storage_extract_payload(line, payload,
-                                             STORAGE_SERVICE_PAYLOAD_MAX) == ESP_OK);
-        invalid = !available;
-    } else if ((err != ESP_ERR_NOT_FOUND) && (err != ESP_ERR_INVALID_SIZE)) {
+    if ((err != ESP_OK) && (err != ESP_ERR_NOT_FOUND) &&
+        (err != ESP_ERR_INVALID_SIZE)) {
+        /* Error de lectura: remontar. Si se repite sobre la misma cabeza, la
+         * cola va a cuarentena para no bloquear la entrega indefinidamente. */
+        if (s_head_read_failures[idx] < UINT8_MAX) {
+            ++s_head_read_failures[idx];
+        }
+        if (s_head_read_failures[idx] >= 3U) {
+            s_head_read_failures[idx] = 0U;
+            return storage_quarantine_queue(kind, path);
+        }
         return err;
     }
+    s_head_read_failures[idx] = 0U;
+
+    if (err == ESP_ERR_INVALID_SIZE) {
+        return storage_discard_head(kind, path, "line too long");
+    }
+    bool available = false;
+    if (err == ESP_OK) {
+        if (storage_extract_payload(line, payload,
+                                    STORAGE_SERVICE_PAYLOAD_MAX) != ESP_OK) {
+            return storage_discard_head(kind, path, "invalid JSON");
+        }
+        available = true;
+    }
+
     storage_lock();
     char *target = (kind == STORAGE_RECORD_ALERT) ? s_alert_head : s_telemetry_head;
     bool *claimed = (kind == STORAGE_RECORD_ALERT) ? &s_alert_claimed : &s_telemetry_claimed;
-    bool *invalid_latched = (kind == STORAGE_RECORD_ALERT)
-        ? &s_alert_head_invalid : &s_telemetry_head_invalid;
-    const bool newly_invalid = invalid && !*invalid_latched;
-    *invalid_latched = invalid;
     if (!*claimed) {
         if (available) {
             (void)snprintf(target, STORAGE_SERVICE_PAYLOAD_MAX, "%s", payload);
@@ -605,12 +729,6 @@ static esp_err_t storage_refresh_head(storage_record_kind_t kind)
         }
     }
     storage_unlock();
-    if (newly_invalid) {
-        LOG_WARN(TAG, "invalid/truncated JSONL head in %s", path);
-        (void)system_health_report_occurrence(
-            SYSTEM_MODULE_SD, SYSTEM_EVENT_IO_ERROR, SYSTEM_SEVERITY_WARNING,
-            ESP_ERR_INVALID_RESPONSE, "invalid/truncated JSONL head");
-    }
     return ESP_OK;
 }
 

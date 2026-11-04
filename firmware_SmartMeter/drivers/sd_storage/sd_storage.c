@@ -239,9 +239,9 @@ esp_err_t sd_storage_drain_lines(const char *relpath,
         return (errno == ENOENT) ? ESP_ERR_NOT_FOUND : ESP_FAIL;
     }
 
-    // Buffer de linea estatico: las lineas son payloads SenML de /datos
-    // (~400 B); 768 coincide con el buffer de publicacion de task_communication.
-    static char line[1280];
+    // Buffer de linea estatico (protegido por el mutex del driver): cabe
+    // cualquier linea que storage_service puede leer como cabeza de cola.
+    static char line[SD_STORAGE_LINE_MAX];
     size_t consumed = 0U;
     size_t remaining = 0U;
     bool consumer_stopped = false;
@@ -286,9 +286,29 @@ esp_err_t sd_storage_drain_lines(const char *relpath,
                 return ESP_FAIL;
             }
         }
-        (void)fputs(line, out);
-        (void)fputc('\n', out);
+        if ((fputs(line, out) < 0) || (fputc('\n', out) == EOF)) {
+            LOG_WARN(TAG, "escritura fallida en %s - backlog intacto", tmppath);
+            (void)fclose(in);
+            (void)fclose(out);
+            (void)remove(tmppath);
+            sd_storage_unlock();
+            return ESP_FAIL;
+        }
         ++remaining;
+    }
+
+    /* fgets() devuelve NULL tanto en EOF como ante un error de lectura. Sin
+     * esta comprobacion un error a mitad de archivo se tomaba como fin y el
+     * reemplazo descartaba todas las lineas posteriores. */
+    if (ferror(in) != 0) {
+        LOG_WARN(TAG, "error de lectura en %s - backlog intacto", fullpath);
+        (void)fclose(in);
+        if (out != NULL) {
+            (void)fclose(out);
+            (void)remove(tmppath);
+        }
+        sd_storage_unlock();
+        return ESP_FAIL;
     }
 
     (void)fclose(in);
@@ -387,18 +407,85 @@ esp_err_t sd_storage_peek_line(const char *relpath, char *out, size_t out_len)
         sd_storage_unlock();
         return (errno == ENOENT) ? ESP_ERR_NOT_FOUND : ESP_FAIL;
     }
-    const bool read_ok = (fgets(out, out_len, f) != NULL);
-    const bool complete = read_ok &&
-        ((strchr(out, '\n') != NULL) || feof(f));
-    (void)fclose(f);
-    if (!read_ok || !complete) {
-        out[0] = '\0';
-        sd_storage_unlock();
-        return read_ok ? ESP_ERR_INVALID_SIZE : ESP_ERR_NOT_FOUND;
+    /* Devuelve la primera linea NO vacia, la misma que retira
+     * sd_storage_drop_first_line(); una linea vacia al inicio ya no se
+     * confunde con cola vacia. Un error de lectura se informa como ESP_FAIL
+     * para que el servicio remonte la SD en vez de dar la cola por vacia. */
+    esp_err_t result = ESP_ERR_NOT_FOUND;
+    for (;;) {
+        if (fgets(out, out_len, f) == NULL) {
+            result = (ferror(f) != 0) ? ESP_FAIL : ESP_ERR_NOT_FOUND;
+            break;
+        }
+        const bool complete = (strchr(out, '\n') != NULL) || feof(f);
+        if (!complete) {
+            result = ESP_ERR_INVALID_SIZE;
+            break;
+        }
+        out[strcspn(out, "\r\n")] = '\0';
+        if (out[0] != '\0') {
+            result = ESP_OK;
+            break;
+        }
     }
-    out[strcspn(out, "\r\n")] = '\0';
+    (void)fclose(f);
+    if (result != ESP_OK) {
+        out[0] = '\0';
+        if (result == ESP_FAIL) {
+            LOG_WARN(TAG, "error de lectura en %s", path);
+        }
+    }
     sd_storage_unlock();
-    return (out[0] != '\0') ? ESP_OK : ESP_ERR_NOT_FOUND;
+    return result;
+}
+
+esp_err_t sd_storage_quarantine_file(const char *relpath,
+                                     char *out_name,
+                                     size_t out_name_len)
+{
+    if (relpath == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_mounted) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!sd_storage_lock()) {
+        return ESP_ERR_TIMEOUT;
+    }
+    char src[128];
+    char dst[128];
+    esp_err_t err = sd_storage_build_path(relpath, NULL, src, sizeof(src));
+    if (err != ESP_OK) {
+        sd_storage_unlock();
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!sd_storage_path_exists(src)) {
+        sd_storage_unlock();
+        return ESP_ERR_NOT_FOUND;
+    }
+    /* Nunca se borra ni se sobrescribe: el contenido queda para revision o
+     * recuperacion manual (la telemetria tambien esta en el archivo de auditoria). */
+    err = ESP_ERR_NO_MEM;
+    for (unsigned n = 1U; n <= 9U; ++n) {
+        char suffix[8];
+        (void)snprintf(suffix, sizeof(suffix), ".bad%u", n);
+        if ((sd_storage_build_path(relpath, suffix, dst, sizeof(dst)) != ESP_OK) ||
+            sd_storage_path_exists(dst)) {
+            continue;
+        }
+        err = (rename(src, dst) == 0) ? ESP_OK : ESP_FAIL;
+        if ((err == ESP_OK) && (out_name != NULL) && (out_name_len > 0U)) {
+            (void)snprintf(out_name, out_name_len, "%s%s", relpath, suffix);
+        }
+        break;
+    }
+    if (err == ESP_OK) {
+        LOG_WARN(TAG, "%s puesto en cuarentena como %s", src, dst);
+    } else {
+        LOG_WARN(TAG, "no se pudo poner %s en cuarentena (%s)", src, esp_err_to_name(err));
+    }
+    sd_storage_unlock();
+    return err;
 }
 
 static esp_err_t sd_storage_drop_consumer(const char *line, void *ctx)
@@ -453,7 +540,7 @@ esp_err_t sd_storage_trim_oldest_lines(const char *relpath,
         return ESP_FAIL;
     }
 
-    static char line[1280];
+    static char line[SD_STORAGE_LINE_MAX];
     size_t line_index = 0U;
     size_t dropped = 0U;
     size_t remaining = 0U;

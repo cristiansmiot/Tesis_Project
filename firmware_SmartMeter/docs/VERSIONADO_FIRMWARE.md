@@ -271,3 +271,26 @@ Respaldo en `evidence/versions/2026-10-31_metro-r1-build/`. Se graba con
 `tools/metrology/` (ver su README).
 
 Estado: compilado; pendiente de la prueba de humo en banco.
+
+## Pruebas reales y verificación post-ajuste — `1.1.0-obj4-q1-rc2` y `1.1.0-metro-r2`
+
+Compiladas el 2026-11-04 sobre `a483027` con cambios aún sin commit (el parche
+está en `evidence/versions/2026-11-04_q1-rc2-build/`, junto a los binarios).
+
+- **Ajuste de tensión:** `METER_ADE_AVGAIN_BENCH = -354737`. Se escribe en `AVGAIN` y se verifica por lectura en cada inicialización o recuperación del ADE. Corrige el +0,265 % medido contra el 34450A en el rango 100 V durante `NOCHE_12h_metro_20261103_run01` (18 ciclos). Afecta por igual a V, P, Q, S y energía. La telemetría lo informa con el bit `cal` = 16 (`CALIB_STATUS_BENCH`). Una calibración mSure persistida lo sustituye.
+- **Colas SD:**
+  - Una cabeza ilegible ya no detiene la entrega en silencio: línea vacía, JSON truncado (se retira y se emite `DATA_LOSS`) y línea de más de 2048 B (la cola pasa a `.badN` sin borrar nada).
+  - Un error de lectura provoca un remontaje; tras tres seguidos, cuarentena.
+  - El drenado ya no trunca la cola ante un error de lectura.
+- **Alertas sin SD:** van a la cola RAM del despachador y se publican en vivo.
+- **Fallo de ACK local:** ya no dispara una recuperación MQTT.
+- **Eventos PQ:** inicio y fin de SAG, SWELL, FREQ y OVERTEMP quedan en `events_v1.jsonl` con severidad INFO. `/alerta` no cambia.
+- **`/estado`:** se quitó el campo `online`, siempre `true`, para dejar margen frente al límite de 1024 B de SMPUB (antes 1014 B).
+
+| Perfil | Versión | SHA-256 del binario | Bytes |
+|---|---|---|---|
+| `integration_qos1_rc2` | `1.1.0-obj4-q1-rc2` | `DED9701AC9AA7AD49B5950B6CCFEC5F7DA18EC9AAB740E39A0548495659DB73F` | 500 896 |
+| `metrology_sd` | `1.1.0-metro-r2` | `F73FBDEEF4329B5729F78F3131D2E6C3E8254E4DAD387930B18A5898B5DF81C2` | 444 496 |
+| `test_sd_service` | perfil 13 | `DE295CAD6A183888DF73B36F2DE36CEA225C7B4B70D30B068A11042F8DBA2E2F` | 504 768 |
+
+Estado: `test_sd_service` en equipo aprobado (salvo `PRODUCERS`, falla preexistente del arnés); q1-rc2 grabado el 2026-11-04 21:03 UTC, AVGAIN verificado y `cal`=16 recibido en Railway. Detalle en `RESULTADOS.txt` de la carpeta de evidencia.

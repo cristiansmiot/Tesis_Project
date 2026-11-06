@@ -1,0 +1,13 @@
+# prueba: E1_corriente_alto
+# descripcion: E1 escalones de corriente, tramo alto (rango ACI 10 A del segundo 34450A, borne 10 A). Carga resistiva a 120 V 60 Hz desde el PCR500MA (maximo 500 VA, ~4 A). Subida y bajada, 30 min de medicion por punto tras 5 min de estabilizacion. V con el 34450A MY52460013 en paralelo; I con el 34450A MY55310031 en serie; P y FP del PCR. Firmware metrology_sd. Cambiar la carga y el borne SOLO con la salida del PCR apagada.
+# dmm_modo: ACV
+# dmm_i: si
+# dmm_i_rango: 10
+# i_lim_a: 4.0
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,E1,I_1p25A_sube,120,60,300,1800,cambio_carga,"Carga resistiva de ~150 W (~1,25 A). Amperimetro en el borne 10 A"
+2,E1,I_2p1A_sube,120,60,300,1800,cambio_carga,"Carga resistiva de ~250 W (~2,1 A)"
+3,E1,I_2p9A_sube,120,60,300,1800,cambio_carga,"Carga resistiva de ~350 W (~2,9 A)"
+4,E1,I_2p9A_baja,120,60,300,1800,,"Misma carga: repeticion en sentido descendente"
+5,E1,I_2p1A_baja,120,60,300,1800,cambio_carga,"Volver a ~250 W"
+6,E1,I_1p25A_baja,120,60,300,1800,cambio_carga,"Volver a ~150 W"

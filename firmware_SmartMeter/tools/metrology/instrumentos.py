@@ -17,6 +17,8 @@ import time
 
 PCR_VISA = "USB0::0x0B3E::0x1050::AR002831::0::INSTR"
 DMM_VISA = "USB0::0x0957::0xB318::MY52460013::0::INSTR"
+# Segundo 34450A (2026-11-05): amperimetro en serie con la carga.
+DMM_I_VISA = "USB0::0x0957::0xB318::MY55310031::0::INSTR"
 
 # Indices de MEASure:ALL? (18 valores) usados en los scripts del banco.
 PCR_IDX_I = 1     # CURRent:AC

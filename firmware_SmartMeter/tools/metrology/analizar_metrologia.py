@@ -112,6 +112,9 @@ def leer_corrida(carpeta):
     acv = ref["dmm_modo"].eq("ACV")
     ref["dmm_v"] = np.where(acv, ref["dmm_valor"], np.nan)
     ref["dmm_i"] = np.where(ref["dmm_modo"].eq("ACI"), ref["dmm_valor"], np.nan)
+    if "dmm_i_valor" in ref and ref["dmm_i_valor"].notna().any():
+        # ejecutar_escenario 1.2: segundo 34450A como amperimetro simultaneo.
+        ref["dmm_i"] = ref["dmm_i_valor"]
     ref["pcr_f_set"] = ref["f_set"]
     ref["pcr_pf"] = ref["pcr_pf"].abs()
     return ref, pasos, cfg
@@ -359,6 +362,8 @@ def analizar_puntos(dut, ref, pasos, fluke, res_fluke, cfgref, guarda_s=1.0):
             continue
         r_win = ref[(ref["t"] >= a - 2) & (ref["t"] <= b + 2)]
         rango = r_win["dmm_rango"].mode().iloc[0] if r_win["dmm_rango"].notna().any() else math.nan
+        rango_i = (r_win["dmm_i_rango"].mode().iloc[0]
+                   if ("dmm_i_rango" in r_win and r_win["dmm_i_rango"].notna().any()) else rango)
         medias = {c: float(r_win[c].mean()) for c in ["pcr_v", "pcr_i", "pcr_p"] if c in r_win}
         for var, cols in cfgref["asignacion"].items():
             lim = cfgref["limites"][var]
@@ -399,7 +404,8 @@ def analizar_puntos(dut, ref, pasos, fluke, res_fluke, cfgref, guarda_s=1.0):
                 e = (dv - rv) / rv * 100.0 if lim["tipo"] == "rel" else dv - rv
                 sd = float(e.std(ddof=1)) if n > 1 else math.nan
                 uA = sd / math.sqrt(n) if n > 1 else math.nan
-                uR, resR, verificar = u_referencia(cfgref, ref_col, r_media, rango, medias, res_fluke)
+                rango_col = rango_i if ref_col == "dmm_i" else rango
+                uR, resR, verificar = u_referencia(cfgref, ref_col, r_media, rango_col, medias, res_fluke)
                 res_d = cfgref["resolucion_dut"][var]
                 uRes = math.sqrt((res_d / (2 * math.sqrt(3))) ** 2 + (resR / (2 * math.sqrt(3))) ** 2)
                 if lim["tipo"] == "rel":
@@ -415,7 +421,7 @@ def analizar_puntos(dut, ref, pasos, fluke, res_fluke, cfgref, guarda_s=1.0):
                 fila.update({"e_medio": e_medio, "desv_std": sd, "MAE": float(np.abs(e).mean()),
                              "e_max": float(e[imax]), "IC95": t95(n) * sd / math.sqrt(n) if n > 1 else math.nan,
                              "uA": uA, "uRef": uR, "uRes": uRes, "U": U,
-                             "dmm_rango": rango if ref_col.startswith("dmm") else "",
+                             "dmm_rango": rango_col if ref_col.startswith("dmm") else "",
                              "decision": decision if principal else f"({decision})",
                              "notas": "; ".join(nota)})
                 puntos.append(fila)

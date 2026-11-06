@@ -1,0 +1,11 @@
+# prueba: E1_corriente_bajo
+# descripcion: E1 escalones de corriente, tramo bajo (rango ACI 1 A del segundo 34450A). Carga resistiva (halogenos/incandescentes) a 120 V 60 Hz desde el PCR. Subida y bajada, 30 min de medicion por punto tras 5 min de estabilizacion (protocolo E1: >= 30 pares separados 1 min). V con el 34450A MY52460013 en paralelo; I con el 34450A MY55310031 en serie; P y FP del PCR. Firmware metrology_sd (sin datos moviles). Cambiar la carga SOLO con la salida del PCR apagada.
+# dmm_modo: ACV
+# dmm_i: si
+# dmm_i_rango: 1
+# i_lim_a: 1.2
+paso,tipo,etiqueta,v_ac,f_hz,estabilizacion_s,medicion_s,accion,nota
+1,E1,I_0p4A_sube,120,60,300,1800,cambio_carga,"Carga resistiva de ~50 W (~0,42 A). Amperimetro en el borne del rango 1 A"
+2,E1,I_0p8A_sube,120,60,300,1800,cambio_carga,"Carga resistiva de ~100 W (~0,83 A)"
+3,E1,I_0p8A_baja,120,60,300,1800,,"Misma carga: repeticion en sentido descendente"
+4,E1,I_0p4A_baja,120,60,300,1800,cambio_carga,"Volver a la carga de ~50 W"

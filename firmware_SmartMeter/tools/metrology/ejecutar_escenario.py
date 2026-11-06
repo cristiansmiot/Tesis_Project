@@ -39,7 +39,7 @@ import instrumentos as ins
 
 AQUI = Path(__file__).resolve().parent
 SALIDA_DEFECTO = AQUI.parents[1] / "evidence" / "obj4_metrologia"
-VERSION = "1.1"
+VERSION = "1.2"
 # Registrador del Fluke 43B ya probado en el banco (tools/fluke43b_logger).
 FLUKE_EXE = AQUI.parents[2] / "tools" / "fluke43b_logger" / "Fluke43BLogger.exe"
 
@@ -53,7 +53,7 @@ PREAMBULO_SYNC = [
 REF_CAMPOS = ["t_utc", "t_epoch", "t_rel_s", "paso", "tipo", "etiqueta", "fase",
               "v_set", "f_set", "salida", "pcr_v", "pcr_i", "pcr_p", "pcr_pf",
               "dmm_modo", "dmm_rango", "dmm_valor", "dmm_f", "t_pcr", "t_dmm",
-              "pcr_crudo"]
+              "pcr_crudo", "dmm_i_rango", "dmm_i_valor", "t_dmm_i"]
 PASO_CAMPOS = ["paso", "tipo", "etiqueta", "v_set", "f_set", "estabilizacion_s",
                "medicion_s", "accion", "nota", "t_inicio_utc", "t_inicio",
                "t_medicion", "t_fin", "dmm_modo", "dmm_rango", "t_cambio"]
@@ -136,9 +136,11 @@ class Estado:
 
 
 class Corrida:
-    def __init__(self, args, escenario, pasos, carpeta, pcr, dmm, fluke):
+    def __init__(self, args, escenario, pasos, carpeta, pcr, dmm, fluke, dmm_i=None):
         self.args, self.esc, self.pasos = args, escenario, pasos
         self.carpeta, self.pcr, self.dmm, self.fluke = carpeta, pcr, dmm, fluke
+        # 1.2: segundo 34450A como amperimetro (ACI fijo, sin secundaria).
+        self.dmm_i = dmm_i
         self.visa = threading.Lock()
         self.estado = Estado()
         self.parar = threading.Event()
@@ -219,6 +221,11 @@ class Corrida:
                         tb = time.time()
                         dv, df = self.dmm.leer()
                         tc = time.time()
+                        di = math.nan
+                        td = tc
+                        if self.dmm_i is not None:
+                            di, _ = self.dmm_i.leer()
+                            td = time.time()
                     fila = dict(ctx)
                     fila.update(m)
                     fila.update({
@@ -230,6 +237,12 @@ class Corrida:
                         "dmm_f": "" if math.isnan(df) else f"{df:.6f}",
                         "t_pcr": f"{(ta + tb) / 2:.3f}", "t_dmm": f"{(tb + tc) / 2:.3f}",
                     })
+                    if self.dmm_i is not None:
+                        fila.update({
+                            "dmm_i_rango": self.args.dmm_i_rango,
+                            "dmm_i_valor": "" if math.isnan(di) else f"{di:.6f}",
+                            "t_dmm_i": f"{(tc + td) / 2:.3f}",
+                        })
                     w.writerow({k: fila.get(k, "") for k in REF_CAMPOS})
                     fh.flush()
                 except Exception as exc:  # noqa: BLE001 - se registra y sigue
@@ -411,12 +424,21 @@ def validar(pasos, args):
     return v_max, f_min, f_max
 
 
-def verificar_banco(args, pcr, dmm, v_max, f_min, f_max):
+def verificar_banco(args, pcr, dmm, v_max, f_min, f_max, dmm_i=None):
     """Comprueba comunicacion y comandos sin encender la salida del PCR."""
     ok = True
     try:
         print("PCR:", pcr.abrir())
         print("DMM:", dmm.abrir())
+        if dmm_i is not None:
+            print("DMM corriente:", dmm_i.abrir())
+            errores = dmm_i.configurar("ACI", args.dmm_i_rango, frecuencia_secundaria=False)
+            print(f"DMM corriente ACI {args.dmm_i_rango:g} A: errores={errores or 'ninguno'}")
+            ok = ok and not errores
+            for _ in range(3):
+                t = time.time()
+                i, _f = dmm_i.leer()
+                print(f"   READ? corriente={i} ({time.time() - t:.2f} s)")
         errores = pcr.configurar(min(150.0, v_max + 2.0), max(40.0, f_min - 2.0),
                                  min(70.0, f_max + 2.0), args.i_lim)
         print("PCR configuracion (salida OFF):", errores or "OK")
@@ -451,7 +473,9 @@ def verificar_banco(args, pcr, dmm, v_max, f_min, f_max):
         print(f"FALLO: {exc!r}")
         ok = False
     finally:
-        for inst in (pcr, dmm):
+        for inst in (pcr, dmm, dmm_i):
+            if inst is None:
+                continue
             try:
                 inst.cerrar()
             except Exception:  # noqa: BLE001
@@ -477,6 +501,11 @@ def main(argv=None):
     ap.add_argument("--dmm-rango", default=None,
                     help="ACV: auto|100|750 (auto=100 V hasta --umbral-100v). ACI: 1|10 A")
     ap.add_argument("--umbral-100v", type=float, default=115.0)
+    ap.add_argument("--dmm-i", nargs="?", const=ins.DMM_I_VISA, default=None,
+                    help="Segundo 34450A como amperimetro en serie (ACI). Sin valor usa "
+                         f"{ins.DMM_I_VISA}")
+    ap.add_argument("--dmm-i-rango", type=float, choices=[1.0, 10.0], default=10.0,
+                    help="Rango ACI del amperimetro [A]: 10 (borne 10 A, por defecto) o 1")
     ap.add_argument("--fluke", default=None, help="Puerto del Fluke 43B, p.ej. COM9")
     ap.add_argument("--fluke-exe", type=Path, default=FLUKE_EXE,
                     help="Registrador Fluke43BLogger.exe (por defecto el de tools/)")
@@ -499,6 +528,12 @@ def main(argv=None):
 
     esc = leer_escenario(args.escenario)
     args.dmm_modo = args.dmm_modo or esc.meta.get("dmm_modo", "ACV").upper()
+    if args.dmm_i is None and esc.meta.get("dmm_i", "").lower() in ("si", "1", "true"):
+        args.dmm_i = ins.DMM_I_VISA
+    if "dmm_i_rango" in esc.meta:
+        args.dmm_i_rango = float(esc.meta["dmm_i_rango"])
+    if args.dmm_i is not None and args.dmm_modo != "ACV":
+        raise SystemExit("Con --dmm-i el primer 34450A mide tension: use dmm_modo ACV")
     if args.i_lim is None:
         args.i_lim = float(esc.meta.get("i_lim_a", "1.0"))
     pasos = construir_pasos(esc, args)
@@ -507,18 +542,22 @@ def main(argv=None):
     total = sum(p.estab_s + p.med_s for p in pasos)
     print(f"Escenario {esc.ruta.name}: {prueba}, {len(pasos)} pasos, ~{total / 60:.1f} min")
     print(f"DMM {args.dmm_modo}, limite I {args.i_lim} A, V max {v_max} V, f {f_min}-{f_max} Hz")
+    if args.dmm_i is not None:
+        print(f"DMM corriente {args.dmm_i} ACI {args.dmm_i_rango:g} A")
 
     if args.simular:
         banco = ins.BancoSimulado(carga=args.carga_simulada)
         pcr, dmm = ins.FuenteSimulada(banco), ins.MultimetroSimulado(banco)
+        dmm_i = ins.MultimetroSimulado(banco) if args.dmm_i else None
         fluke = None
     else:
         pcr, dmm = ins.FuentePCR(args.pcr), ins.MultimetroDMM(args.dmm)
+        dmm_i = ins.MultimetroDMM(args.dmm_i) if args.dmm_i else None
         fluke = ins.Fluke43B(args.fluke) if (args.fluke and args.fluke_python) else None
         if args.fluke and not args.fluke_python and not args.fluke_exe.exists():
             raise SystemExit(f"No existe {args.fluke_exe}; use --fluke-python")
     if args.verificar:
-        return verificar_banco(args, pcr, dmm, v_max, f_min, f_max)
+        return verificar_banco(args, pcr, dmm, v_max, f_min, f_max, dmm_i)
 
     if not (args.si or args.simular):
         print("\nLISTA DE CHEQUEO (ADE9153A no aislado):\n"
@@ -527,6 +566,8 @@ def main(argv=None):
               "  3. Carga pasando por el canal de corriente del medidor"
               + (" y por el 34450A en serie (borne A, rango correcto).\n" if args.dmm_modo == "ACI"
                  else ".\n  4. 34450A en paralelo en bornes de tension del medidor.\n")
+              + ("  4b. Segundo 34450A EN SERIE con la carga (borne 10 A si el rango es 10 A),\n"
+                 "      conectado con el PCR apagado.\n" if args.dmm_i else "")
               + "  5. microSD insertada; OLED mostrando mediciones.")
         if input("Escriba SI para continuar: ").strip().upper() != "SI":
             print("Cancelado.")
@@ -545,6 +586,7 @@ def main(argv=None):
         "notas": args.notas, "dut": {"device_id": args.dut, "firmware": args.fw},
         "instrumentos": {}, "dmm_modo": args.dmm_modo, "dmm_rango": args.dmm_rango or "auto",
         "umbral_100v": args.umbral_100v, "periodo_s": args.periodo, "i_lim_a": args.i_lim,
+        "dmm_i": args.dmm_i, "dmm_i_rango": args.dmm_i_rango if args.dmm_i else None,
         "v_max": args.v_max, "rampa_s": args.rampa_s, "rapido": args.rapido,
         "host": platform.node(), "python": sys.version.split()[0],
         "pasos": [asdict(p) for p in pasos],
@@ -559,12 +601,17 @@ def main(argv=None):
     try:
         config["instrumentos"]["pcr"] = pcr.abrir()
         config["instrumentos"]["dmm"] = dmm.abrir()
+        if dmm_i is not None:
+            config["instrumentos"]["dmm_i"] = dmm_i.abrir()
+            errores_i = dmm_i.configurar("ACI", args.dmm_i_rango, frecuencia_secundaria=False)
+            if errores_i:
+                raise RuntimeError(f"34450A de corriente rechazo ACI {args.dmm_i_rango}: {errores_i}")
         errores = pcr.configurar(min(150.0, v_max + 2.0), max(40.0, f_min - 2.0),
                                  min(70.0, f_max + 2.0), args.i_lim)
         if errores:
             raise RuntimeError(f"PCR rechazo la configuracion: {errores}")
         guardar_cfg()
-        corrida = Corrida(args, esc, pasos, carpeta, pcr, dmm, fluke)
+        corrida = Corrida(args, esc, pasos, carpeta, pcr, dmm, fluke, dmm_i)
         corrida.log(f"inicio corrida {carpeta.name} PCR={config['instrumentos']['pcr']} "
                     f"DMM={config['instrumentos']['dmm']}")
         estado = corrida.ejecutar()
@@ -578,10 +625,13 @@ def main(argv=None):
             pcr.cerrar()
         except Exception as exc:  # noqa: BLE001
             print(f"ERROR cerrando PCR: {exc!r} -- APAGAR LA SALIDA MANUALMENTE")
-        try:
-            dmm.cerrar()
-        except Exception:  # noqa: BLE001
-            pass
+        for inst in (dmm, dmm_i):
+            if inst is None:
+                continue
+            try:
+                inst.cerrar()
+            except Exception:  # noqa: BLE001
+                pass
         config["estado"] = estado
         config["fin_utc"] = ahora_iso()
         guardar_cfg()

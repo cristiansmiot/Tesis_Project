@@ -2,13 +2,14 @@
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, and_
+from sqlalchemy import func
 from typing import Optional, List
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.config import settings
 from app.database import get_db
 from app.services.conexion import refrescar_estados_conexion
+from app.services.consumo import BOGOTA, consumo_por_hora, consumo_wh, inicio_dia_local
 from app.models.dispositivo import Dispositivo
 from app.models.medicion import Medicion
 from app.models.evento import Evento
@@ -23,7 +24,14 @@ class ResumenGeneral(BaseModel):
     online: int
     offline: int
     alarmas_activas: int
+    # Consumo de hoy (kWh) desde las 00:00 de Bogotá: diferencia del contador
+    # de cada medidor, no la suma de los contadores. consumo_total_kwh se
+    # conserva como alias para clientes anteriores.
     consumo_total_kwh: float
+    consumo_dia_kwh: float = 0.0
+    consumo_dia_desde: Optional[datetime] = None
+    # Suma del último contador de cada medidor activo (kWh).
+    energia_acumulada_kwh: Optional[float] = None
     # Indicador residencial: 120 V nominales, banda estacionaria 108-132 V.
     # promedio de la última medición de cada dispositivo y cuántos están
     # fuera del rango admisible. Si no hay mediciones, voltaje_promedio es None.
@@ -34,12 +42,17 @@ class ResumenGeneral(BaseModel):
 
 
 class ConsumoHorario(BaseModel):
-    hora: str
+    hora: str  # "HH:00", hora local de Bogotá
     consumo: float  # kWh
+    wh: float = 0.0
+    inicio: Optional[datetime] = None  # inicio de la hora (UTC)
+    muestras: int = 0  # lecturas recibidas en esa hora
+    con_hueco: bool = False  # incluye consumo de un periodo sin datos > 1 h
 
 
 class ConsumoHorarioResponse(BaseModel):
-    fecha: str
+    fecha: str  # fecha local de Bogotá
+    zona_horaria: str = "America/Bogota (UTC-5)"
     datos: List[ConsumoHorario]
 
 
@@ -49,7 +62,7 @@ class ConsumoHorarioResponse(BaseModel):
 def obtener_resumen(db: Session = Depends(get_db)):
     """
     Obtener métricas consolidadas para el dashboard principal.
-    Retorna conteo de dispositivos, alarmas activas y consumo total del día.
+    Retorna conteo de dispositivos, alarmas activas y consumo de hoy (kWh).
     """
     # Antes de contar, apagar el flag de los que dejaron de publicar:
     # La presencia depende de last_seen, no de mensajes LWT.
@@ -65,32 +78,30 @@ def obtener_resumen(db: Session = Depends(get_db)):
     # Alarmas activas
     alarmas = db.query(func.count(Evento.id)).filter(Evento.activo == True).scalar() or 0
 
-    # Consumo total del día: suma de la última energía reportada por cada dispositivo
-    # Subconsulta: última medición por dispositivo
-    from sqlalchemy.orm import aliased
-    subq = (
-        db.query(
-            Medicion.device_id,
-            func.max(Medicion.id).label("max_id"),
+    # Consumo de hoy: diferencias del contador desde las 00:00 de Bogotá.
+    ahora = datetime.now(timezone.utc)
+    inicio_dia = inicio_dia_local(ahora)
+    consumo_dia_kwh = round(consumo_wh(db, inicio_dia, ahora) / 1000.0, 4)
+
+    # Última lectura de cada medidor activo, por marca de tiempo y no por id:
+    # el backlog de la microSD llega después con lecturas más antiguas.
+    ultimas = []
+    for (device_id,) in db.query(Dispositivo.device_id).filter(Dispositivo.activo == True).all():
+        ultima = (
+            db.query(Medicion.energia_activa, Medicion.voltaje_rms)
+            .filter(Medicion.device_id == device_id)
+            .order_by(Medicion.timestamp.desc(), Medicion.id.desc())
+            .first()
         )
-        .group_by(Medicion.device_id)
-        .subquery()
-    )
-    consumo_total = (
-        db.query(func.coalesce(func.sum(Medicion.energia_activa), 0.0))
-        .join(subq, Medicion.id == subq.c.max_id)
-        .scalar()
-    ) or 0.0
+        if ultima is not None:
+            ultimas.append(ultima)
+    contadores = [e for e, _ in ultimas if e is not None]
+    energia_acumulada_kwh = round(sum(contadores) / 1000.0, 3) if contadores else None
 
     # Tensión de la red: última lectura de voltaje por dispositivo.
     # Se descartan lecturas en 0 (nodo encendido pero sin línea AC) para no
     # arrastrar el promedio ni contar falsos fuera-de-rango.
-    voltajes = [
-        v for (v,) in db.query(Medicion.voltaje_rms)
-        .join(subq, Medicion.id == subq.c.max_id)
-        .all()
-        if v and v > 0
-    ]
+    voltajes = [v for _, v in ultimas if v and v > 0]
     voltaje_promedio = round(sum(voltajes) / len(voltajes), 1) if voltajes else None
     fuera_rango = sum(
         1 for v in voltajes if v < settings.voltaje_min or v > settings.voltaje_max
@@ -101,7 +112,10 @@ def obtener_resumen(db: Session = Depends(get_db)):
         online=online,
         offline=offline,
         alarmas_activas=alarmas,
-        consumo_total_kwh=round(consumo_total, 1),
+        consumo_total_kwh=consumo_dia_kwh,
+        consumo_dia_kwh=consumo_dia_kwh,
+        consumo_dia_desde=inicio_dia,
+        energia_acumulada_kwh=energia_acumulada_kwh,
         voltaje_promedio=voltaje_promedio,
         dispositivos_fuera_rango=fuera_rango,
         voltaje_min_creg=settings.voltaje_min,
@@ -115,44 +129,23 @@ def obtener_consumo_horario(
     db: Session = Depends(get_db),
 ):
     """
-    Obtener consumo agregado por hora para la gráfica de barras del dashboard.
-    Agrupa la potencia activa promedio por hora y la convierte a kWh.
+    Consumo agregado de todos los medidores por hora local de Bogotá, de la
+    hora ``horas - 1`` atrás hasta la actual (en curso). Cada barra es la
+    diferencia del contador de energía, sumada entre medidores.
     """
-    desde = datetime.now(timezone.utc) - timedelta(hours=horas)
-
-    # Obtener mediciones de las últimas N horas
-    mediciones = (
-        db.query(Medicion.timestamp, Medicion.potencia_activa)
-        .filter(Medicion.timestamp >= desde)
-        .order_by(Medicion.timestamp)
-        .all()
-    )
-
-    # Agrupar por hora
-    horas_bucket = {}
-    for h in range(24):
-        horas_bucket[h] = []
-
-    for m in mediciones:
-        if m.timestamp and m.potencia_activa is not None:
-            hora = m.timestamp.hour
-            horas_bucket[hora].append(m.potencia_activa)
-
-    # Calcular consumo promedio por hora (W promedio → kWh en 1 hora)
-    datos = []
-    for h in range(24):
-        valores = horas_bucket[h]
-        if valores:
-            promedio_w = sum(valores) / len(valores)
-            kwh = promedio_w / 1000.0  # W promedio * 1h = Wh, /1000 = kWh
-        else:
-            kwh = 0.0
-        datos.append(ConsumoHorario(
-            hora=f"{h:02d}:00",
-            consumo=round(kwh, 2),
-        ))
-
+    ahora = datetime.now(timezone.utc)
+    datos = [
+        ConsumoHorario(
+            hora=c["inicio"].astimezone(BOGOTA).strftime("%H:00"),
+            consumo=round(c["wh"] / 1000.0, 4),
+            wh=round(c["wh"], 2),
+            inicio=c["inicio"],
+            muestras=c["muestras"],
+            con_hueco=c["con_hueco"],
+        )
+        for c in consumo_por_hora(db, horas, ahora)
+    ]
     return ConsumoHorarioResponse(
-        fecha=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        fecha=ahora.astimezone(BOGOTA).strftime("%Y-%m-%d"),
         datos=datos,
     )

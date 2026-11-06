@@ -121,7 +121,7 @@ def root():
 @app.get("/health", tags=["Health"])
 def health_check():
     from datetime import datetime
-    from app.database import test_connection
+    from app.database import get_engine, test_connection
     db_ok = test_connection()
     mqtt = get_mqtt_client()
     mqtt_status = mqtt.get_status() if mqtt else {"connected": False}
@@ -129,7 +129,7 @@ def health_check():
         "status": "healthy" if db_ok else "degraded",
         "timestamp": datetime.utcnow().isoformat(),
         "database": {
-            "type": "PostgreSQL" if not settings.USE_SQLITE else "SQLite",
+            "type": get_engine().dialect.name,
             "connected": db_ok,
         },
         "mqtt": {

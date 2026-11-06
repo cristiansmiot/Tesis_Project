@@ -7,7 +7,6 @@ import ActiveAlertsList from '../components/alerts/ActiveAlertsList';
 import { dashboardAPI, eventosAPI } from '../services/api';
 import { evaluarVoltaje } from '../utils/voltage';
 import { parseApiTimestamp } from '../utils/dateTime';
-import { whAKwh } from '../utils/consumo';
 
 const Resumen = () => {
   const { refreshKey } = useOutletContext();
@@ -16,7 +15,7 @@ const Resumen = () => {
     online: 0,
     offline: 0,
     alarmas_activas: 0,
-    consumo_total_kwh: 0,
+    consumo_dia_kwh: null,
     voltaje_promedio: null,
     dispositivos_fuera_rango: 0,
   });
@@ -78,9 +77,14 @@ const Resumen = () => {
         <KpiCard label="Online" valor={metricas.online} icon={Wifi} />
         <KpiCard label="Offline" valor={metricas.offline} icon={WifiOff} />
         <KpiCard label="Alarmas activas" valor={metricas.alarmas_activas} icon={AlertTriangle} />
-        {/* El backend suma el ultimo contador (Wh) de cada medidor: es energia
-            acumulada, no consumo del dia. Se muestra en kWh con su nombre real. */}
-        <KpiCard label="Energía acumulada" valor={whAKwh(metricas.consumo_total_kwh) ?? '---'} unidad="kWh" icon={Zap} />
+        {/* Consumo desde las 00:00 de Bogota: diferencia del contador de cada
+            medidor, calculada en el backend (kWh). */}
+        <KpiCard
+          label="Consumo hoy"
+          valor={Number.isFinite(metricas.consumo_dia_kwh) ? metricas.consumo_dia_kwh.toFixed(3) : '---'}
+          unidad="kWh"
+          icon={Zap}
+        />
         <KpiCard
           label="Tensión de red"
           valor={metricas.voltaje_promedio != null ? metricas.voltaje_promedio : '--'}

@@ -622,8 +622,10 @@ const char *system_event_code_name(system_event_code_t code)
         "SIM_NO_AT", "CELL_NO_SERVICE", "PDP_DOWN", "MQTT_DISCONNECTED",
         "PQ_SAG", "PQ_SWELL", "PQ_FREQ_OOR", "OVERTEMP", "SPI_ERROR",
         "ADC_ERROR", "RTC_BACKUP_LOST", "SIM_OFF", "AC_LOST",
-        "AC_RESTORED"
+        "AC_RESTORED", "MODEM_RECOVERY"
     };
+    _Static_assert((sizeof(names) / sizeof(names[0])) == SYSTEM_EVENT_CODE_COUNT,
+                   "system_event_code_name: falta un nombre de codigo");
     return ((code >= SYSTEM_EVENT_CODE_NONE) && (code < SYSTEM_EVENT_CODE_COUNT))
                ? names[code] : "UNKNOWN";
 }

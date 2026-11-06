@@ -31,6 +31,7 @@ typedef struct {
     uint64_t data_loss_bytes;
     uint32_t queue_heads_discarded;   // cabezas JSONL invalidas retiradas
     uint32_t queue_files_quarantined; // colas renombradas a .badN
+    uint32_t queue_read_retries_ok;   // rc4: lecturas de cola salvadas al reintentar
 } storage_service_snapshot_t;
 
 esp_err_t storage_service_start(void);

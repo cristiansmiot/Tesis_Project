@@ -24,12 +24,220 @@
 #include "system_event_dispatcher.h"
 #include "system_health.h"
 #include "time_service.h"
+#include "esp_timer.h"
 #include "logger.h"
+#include "../modules/communication/cell_recovery.h"
 
 static const char *TAG = "task_communication";
 static TaskHandle_t s_task_handle;
 static bool s_subscribed;
 static volatile bool s_force_estado; // set by "status" cmd → publica /estado inmediato
+
+/* ── rc4: escalera de recuperacion celular ──────────────────────────────
+ * El reloj del corte se reinicia solo con una publicacion confirmada. */
+static cell_recovery_t s_cell;
+
+static uint64_t comm_now_ms(void)
+{
+    return (uint64_t)(esp_timer_get_time() / 1000LL);
+}
+
+static const cell_recovery_config_t k_cell_cfg = {
+    .n1_after_ms = METER_CELL_RECOVERY_N1_AFTER_MS,
+    .n1_early_ms = METER_CELL_RECOVERY_N1_EARLY_MS,
+    .n1_min_gap_ms = METER_CELL_RECOVERY_N1_MIN_GAP_MS,
+    .n2_after_ms = METER_CELL_RECOVERY_N2_AFTER_MS,
+    .n2_min_gap_ms = METER_CELL_RECOVERY_N2_MIN_GAP_MS,
+    .n3_after_ms = METER_CELL_RECOVERY_N3_AFTER_MS,
+    .n3_gap_ms = METER_CELL_RECOVERY_N3_GAP_MS,
+    .n3_max_gap_ms = METER_CELL_RECOVERY_N3_MAX_GAP_MS,
+    .n3_max_per_day = METER_CELL_RECOVERY_N3_MAX_PER_DAY,
+    .probe_min_gap_ms = METER_CELL_RECOVERY_PROBE_MIN_GAP_MS,
+    .probe_ok_n2_after_ms = METER_CELL_RECOVERY_PROBE_OK_N2_AFTER_MS,
+};
+
+#if METER_CELL_RECOVERY_TEST_HOOKS
+/* Guion de banco (solo entorno integration_qos1_rc4_banco). Arranca 3 min
+ * despues de la primera publicacion confirmada:
+ *   A  12 min: falla MQTT simulada con registro y PDP reales arriba. La sonda
+ *      debe responder y la escalera NO debe tocar el modem.
+ *   B   4 min: normal (vacia la cola).
+ *   C  16 min: falta de registro simulada. La escalera debe ejecutar N1, N2 y
+ *      N3 reales sobre el modem.
+ *   D  normal: recuperacion y vaciado; fin del guion. */
+#ifndef COMM_TEST_START_MIN
+#define COMM_TEST_START_MIN  3U
+#endif
+#ifndef COMM_TEST_A_MIN
+#define COMM_TEST_A_MIN      12U
+#endif
+#ifndef COMM_TEST_B_MIN
+#define COMM_TEST_B_MIN      4U
+#endif
+#ifndef COMM_TEST_C_MIN
+#define COMM_TEST_C_MIN      16U
+#endif
+#define COMM_TEST_START_MS   (COMM_TEST_START_MIN * 60000U)
+#define COMM_TEST_A_MS       (COMM_TEST_A_MIN * 60000U)
+#define COMM_TEST_B_MS       (COMM_TEST_B_MIN * 60000U)
+#define COMM_TEST_C_MS       (COMM_TEST_C_MIN * 60000U)
+static uint64_t s_test_first_ok_ms;
+static int s_test_phase = -1;
+
+static int comm_test_phase(void)
+{
+    if (s_test_first_ok_ms == 0ULL) {
+        return -1;
+    }
+    const uint64_t t = comm_now_ms() - s_test_first_ok_ms;
+    const uint64_t a0 = COMM_TEST_START_MS;
+    const uint64_t b0 = a0 + COMM_TEST_A_MS;
+    const uint64_t c0 = b0 + COMM_TEST_B_MS;
+    const uint64_t d0 = c0 + COMM_TEST_C_MS;
+    const int phase = (t < a0) ? 0 : (t < b0) ? 1 : (t < c0) ? 2 : (t < d0) ? 3 : 4;
+    if (phase != s_test_phase) {
+        static const char *const k_names[] = {
+            "TEST guion: espera", "TEST fase A: MQTT simulado 12 min",
+            "TEST fase B: normal 4 min", "TEST fase C: sin registro 16 min",
+            "TEST fase D: normal, fin del guion"
+        };
+        s_test_phase = phase;
+        LOG_WARN(TAG, "%s", k_names[phase]);
+        (void)system_health_report_occurrence(SYSTEM_MODULE_CELLULAR,
+                                              SYSTEM_EVENT_MODEM_RECOVERY,
+                                              SYSTEM_SEVERITY_INFO, ESP_OK,
+                                              k_names[phase]);
+    }
+    return phase;
+}
+
+static bool comm_test_mqtt_fault(void) { return comm_test_phase() == 1; }
+static bool comm_test_cell_fault(void) { return comm_test_phase() == 3; }
+#else
+static bool comm_test_mqtt_fault(void) { return false; }
+static bool comm_test_cell_fault(void) { return false; }
+#endif
+
+/** Publica y, si el modem confirma, cierra el corte de la escalera. */
+static esp_err_t comm_publish(const char *topic, const char *payload, int qos, int retain)
+{
+    if (comm_test_mqtt_fault() || comm_test_cell_fault()) {
+        return ESP_FAIL;
+    }
+    const esp_err_t err = mqtt_client_publish(topic, payload, qos, retain);
+    if (err == ESP_OK) {
+#if METER_CELL_RECOVERY_TEST_HOOKS
+        if (s_test_first_ok_ms == 0ULL) {
+            s_test_first_ok_ms = comm_now_ms();
+        }
+#endif
+        cell_recovery_note_ok(&s_cell, comm_now_ms());
+    }
+    return err;
+}
+
+#if METER_CELL_RECOVERY_ENABLE
+static const char *comm_fail_name(cell_fail_class_t cls)
+{
+    switch (cls) {
+        case CELL_FAIL_NOT_REGISTERED: return "sinreg";
+        case CELL_FAIL_PDP:            return "sinPDP";
+        case CELL_FAIL_DATA:           return "sindatos";
+        default:                       return "-";
+    }
+}
+#endif
+
+/**
+ * Decide y ejecuta el escalon que corresponda tras una vuelta fallida. Solo
+ * con el modem contestando AT: ocupado o mudo siguen sus politicas propias.
+ */
+static void comm_cell_ladder(cell_fail_class_t cls,
+                             bool *profile_ready, bool *session_ready)
+{
+#if METER_CELL_RECOVERY_ENABLE
+    if ((cls == CELL_FAIL_NONE) || sim7080g_is_modem_busy() ||
+        !sim7080g_last_at_response_ok()) {
+        return;
+    }
+    const int stat = comm_test_cell_fault() ? 2 : sim7080g_get_reg_stat();
+    cell_action_t action = cell_recovery_decide(&s_cell, comm_now_ms(), cls, stat);
+    char probe_detail[32] = "";
+    if (action == CELL_ACTION_PROBE) {
+        task_monitor_heartbeat(TASK_MON_COMMUNICATION);
+        const bool ok = (sim7080g_data_probe(probe_detail, sizeof(probe_detail)) == ESP_OK);
+        cell_recovery_note_probe(&s_cell, comm_now_ms(), ok);
+        action = cell_recovery_decide(&s_cell, comm_now_ms(), cls, stat);
+    }
+
+    const uint64_t now = comm_now_ms();
+    const uint32_t mins = cell_recovery_outage_min(&s_cell, now);
+    char detail[SYSTEM_EVENT_DETAIL_LEN];
+    if (action == CELL_ACTION_HOLD_PROBE_OK) {
+        if (!s_cell.hold_reported) {
+            (void)snprintf(detail, sizeof(detail), "sin reinicio: %.19s t=%lum",
+                           probe_detail, (unsigned long)mins);
+            LOG_WARN(TAG, "escalera: %s (falla del broker/servidor)", detail);
+            (void)system_health_report_occurrence(SYSTEM_MODULE_SIM_MODEM,
+                                                  SYSTEM_EVENT_MODEM_RECOVERY,
+                                                  SYSTEM_SEVERITY_INFO, ESP_OK, detail);
+        }
+        cell_recovery_note_action(&s_cell, now, action);
+        return;
+    }
+    if ((action != CELL_ACTION_N1) && (action != CELL_ACTION_N2) &&
+        (action != CELL_ACTION_N3)) {
+        return;
+    }
+
+    static const char *const k_step[] = { "", "", "", "N1 CFUN4/1", "N2 CFUN1,1", "N3 PWRKEY" };
+    (void)snprintf(detail, sizeof(detail), "%s t=%lum reg=%d %s%s%s",
+                   k_step[action], (unsigned long)mins, stat, comm_fail_name(cls),
+                   (probe_detail[0] != '\0') ? " " : "",
+                   (probe_detail[0] != '\0') ? "sonda no" : "");
+    const system_severity_t sev = (action == CELL_ACTION_N1)
+        ? SYSTEM_SEVERITY_INFO : SYSTEM_SEVERITY_WARNING;
+    LOG_WARN(TAG, "escalera: %s", detail);
+    (void)system_health_report_occurrence(SYSTEM_MODULE_SIM_MODEM,
+                                          SYSTEM_EVENT_MODEM_RECOVERY, sev,
+                                          ESP_OK, detail);
+    // Se registra antes de ejecutar: si la accion se cuelga, no se repite enseguida.
+    cell_recovery_note_action(&s_cell, now, action);
+    if (action != CELL_ACTION_N1) {
+        // El SIM7080G volvera a emitir MODULE_READY al contestar AT: eso
+        // cierra la alarma en la plataforma con su hora de fin.
+        (void)system_health_mark_recovering(SYSTEM_MODULE_SIM_MODEM, detail);
+    }
+
+    task_monitor_heartbeat(TASK_MON_COMMUNICATION);
+    esp_err_t err = ESP_OK;
+    switch (action) {
+        case CELL_ACTION_N1: err = sim7080g_radio_reattach(); break;
+        case CELL_ACTION_N2: err = sim7080g_soft_reset(); break;
+        case CELL_ACTION_N3:
+            err = sim7080g_power_hard_cycle();
+            sim7080g_mark_modem_unready();
+            break;
+        default: break;
+    }
+    task_monitor_heartbeat(TASK_MON_COMMUNICATION);
+    *session_ready = false;
+    *profile_ready = false;
+    s_subscribed = false;
+    if (err != ESP_OK) {
+        (void)snprintf(detail, sizeof(detail), "%s sin exito: %s",
+                       k_step[action], esp_err_to_name(err));
+        LOG_WARN(TAG, "escalera: %s", detail);
+        (void)system_health_report_occurrence(SYSTEM_MODULE_SIM_MODEM,
+                                              SYSTEM_EVENT_MODEM_RECOVERY,
+                                              SYSTEM_SEVERITY_INFO, err, detail);
+    }
+#else
+    (void)cls;
+    (void)profile_ready;
+    (void)session_ready;
+#endif
+}
 
 #define REMOTE_TIME_CMD_PREFIX "sync_time:"
 
@@ -124,7 +332,7 @@ static esp_err_t task_communication_publish_persisted(storage_record_kind_t kind
         return ESP_ERR_NOT_FOUND;
     }
     if (kind == STORAGE_RECORD_TELEMETRY) { node_health_data_publish_attempt_inc(); }
-    const esp_err_t err = mqtt_client_publish(topic, line, qos, 0);
+    const esp_err_t err = comm_publish(topic, line, qos, 0);
     if (err == ESP_OK) {
         if (kind == STORAGE_RECORD_TELEMETRY) { node_health_msg_tx_inc(); }
         const esp_err_t ack_err = storage_service_ack_pending(kind);
@@ -161,7 +369,7 @@ static void task_communication_publish_system_alerts(char *payload,
             (void)system_alert_discard();
             continue;
         }
-        const esp_err_t err = mqtt_client_publish(mqtt_topics_alerta(),
+        const esp_err_t err = comm_publish(mqtt_topics_alerta(),
                                                   payload, 1, 0);
         if (err != ESP_OK) {
             LOG_WARN(TAG, "system alert publish pending seq=%lu err=%s",
@@ -197,7 +405,7 @@ static esp_err_t task_communication_publish_fallback(void)
         LOG_WARN(TAG, "SD unavailable: live measurement has no durable audit");
     }
     node_health_data_publish_attempt_inc();
-    const esp_err_t err = mqtt_client_publish(mqtt_topics_datos(), payload,
+    const esp_err_t err = comm_publish(mqtt_topics_datos(), payload,
         METER_MQTT_PUBLISH_QOS, METER_MQTT_PUBLISH_RETAIN);
     if (err == ESP_OK) {
         node_health_msg_tx_inc();
@@ -268,6 +476,9 @@ static void task_communication(void *pvParameters)
         // PWRKEY queda en LOW: sin configurar, el GPIO flotante podria
         // excitar el transistor del HAT y "presionar" el boton del modem.
         (void)sim7080g_power_init();
+#if METER_SIM7080G_POWER_OFF_WHEN_DISABLED
+        (void)sim7080g_power_off_if_on();
+#endif
         (void)system_health_set_disabled(SYSTEM_MODULE_SIM_MODEM,
                                          "communication disabled");
         (void)system_health_set_disabled(SYSTEM_MODULE_CELLULAR,
@@ -313,9 +524,38 @@ static void task_communication(void *pvParameters)
     (void)system_health_mark_recovering(SYSTEM_MODULE_SIM_MODEM,
                                         "modem startup");
 
+    cell_recovery_init(&s_cell, &k_cell_cfg, comm_now_ms());
+#if METER_CELL_RECOVERY_TEST_HOOKS
+    {
+        const int failed_step = cell_recovery_selftest();
+        char st_detail[SYSTEM_EVENT_DETAIL_LEN];
+        if (failed_step == 0) {
+            (void)snprintf(st_detail, sizeof(st_detail), "TEST autoprueba escalera OK (33 pasos)");
+            LOG_INFO(TAG, "%s", st_detail);
+        } else {
+            (void)snprintf(st_detail, sizeof(st_detail), "TEST autoprueba escalera FALLA paso %d",
+                           failed_step);
+            LOG_ERROR(TAG, "%s", st_detail);
+        }
+        (void)system_health_report_occurrence(SYSTEM_MODULE_CELLULAR,
+                                              SYSTEM_EVENT_MODEM_RECOVERY,
+                                              (failed_step == 0) ? SYSTEM_SEVERITY_INFO
+                                                                 : SYSTEM_SEVERITY_WARNING,
+                                              ESP_OK, st_detail);
+    }
+#endif
+
     for (;;) {
         task_monitor_heartbeat(TASK_MON_COMMUNICATION);
         bool fast_retry = false;
+        // rc4: clase de la falla de esta vuelta, para la escalera.
+        cell_fail_class_t fail_cls = CELL_FAIL_NONE;
+        if (comm_test_cell_fault()) {
+            // Guion de banco: sin registro no hay sesion. Sin esto la
+            // reconexion MQTT real dejaba la sesion "lista" y la vuelta nunca
+            // pasaba por la ruta de registro (banco run01, 2026-11-05).
+            mqtt_session_ready = false;
+        }
 
         // ?????? Gestion de sesion MQTT ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
         // Evita ciclos AT innecesarios cuando ya hay sesion activa.
@@ -367,6 +607,7 @@ static void task_communication(void *pvParameters)
                         SYSTEM_SEVERITY_WARNING, modem_err,
                         "AT ready; modem setup incomplete");
                     LOG_WARN(TAG, "AT responde pero init del modem fallo - sin PWRKEY");
+                    fail_cls = CELL_FAIL_NOT_REGISTERED;
                 }
                 mqtt_profile_ready = false;
                 fast_retry = true;
@@ -380,6 +621,17 @@ static void task_communication(void *pvParameters)
             // perfil MQTT. Idempotente: normalmente ya la fijo la UI.
             (void)mqtt_topics_init();
 
+            if (comm_test_cell_fault()) {
+                (void)system_health_report_failure(
+                    SYSTEM_MODULE_CELLULAR, SYSTEM_EVENT_CELL_NO_SERVICE,
+                    SYSTEM_SEVERITY_WARNING, ESP_ERR_TIMEOUT,
+                    "TEST registro ausente simulado");
+                mqtt_profile_ready = false;
+                fail_cls = CELL_FAIL_NOT_REGISTERED;
+                fast_retry = true;
+                goto cycle_delay;
+            }
+
             if (!sim7080g_is_pdp_ready()) {
                 node_health_cellular_attempt_inc();
                 (void)system_health_mark_recovering(SYSTEM_MODULE_CELLULAR,
@@ -388,13 +640,21 @@ static void task_communication(void *pvParameters)
                 if (network_err != ESP_OK) {
                     LOG_WARN(TAG, "network recovery failed");
                     const bool registered = sim7080g_is_network_ready();
+                    char reg_detail[SYSTEM_EVENT_DETAIL_LEN];
+                    if (registered) {
+                        (void)snprintf(reg_detail, sizeof(reg_detail),
+                                       "cellular registered; PDP activation failed");
+                    } else {
+                        (void)snprintf(reg_detail, sizeof(reg_detail),
+                                       "cellular network registration failed CEREG=%d",
+                                       sim7080g_get_reg_stat());
+                    }
                     (void)system_health_report_failure(
                         SYSTEM_MODULE_CELLULAR,
                         registered ? SYSTEM_EVENT_PDP_DOWN
                                    : SYSTEM_EVENT_CELL_NO_SERVICE,
-                        SYSTEM_SEVERITY_WARNING, network_err,
-                        registered ? "cellular registered; PDP activation failed"
-                                   : "cellular network registration failed");
+                        SYSTEM_SEVERITY_WARNING, network_err, reg_detail);
+                    fail_cls = registered ? CELL_FAIL_PDP : CELL_FAIL_NOT_REGISTERED;
                     mqtt_profile_ready = false;
                     fast_retry = true;
                     goto cycle_delay;
@@ -414,13 +674,15 @@ static void task_communication(void *pvParameters)
                         SYSTEM_MODULE_MQTT, SYSTEM_EVENT_INIT_FAILED,
                         SYSTEM_SEVERITY_WARNING, mqtt_init_err,
                         "MQTT profile setup failed");
+                    fail_cls = CELL_FAIL_DATA;
                     mqtt_profile_ready = false;
                     fast_retry = true;
                     goto cycle_delay;
                 }
                 mqtt_profile_ready = true;
             }
-            const esp_err_t mqtt_connect_err = mqtt_client_connect();
+            const esp_err_t mqtt_connect_err =
+                comm_test_mqtt_fault() ? ESP_FAIL : mqtt_client_connect();
             if ((mqtt_connect_err != ESP_OK) &&
                 (sim7080g_is_modem_busy() ||
                  (sim7080g_is_network_ready() && sim7080g_is_pdp_ready()))) {
@@ -433,6 +695,7 @@ static void task_communication(void *pvParameters)
                     SYSTEM_MODULE_MQTT, SYSTEM_EVENT_MQTT_DISCONNECTED,
                     SYSTEM_SEVERITY_WARNING, mqtt_connect_err,
                     "MQTT connect failed; cellular up without data");
+                fail_cls = CELL_FAIL_DATA;
                 fast_retry = true;
                 goto cycle_delay;
             }
@@ -445,6 +708,7 @@ static void task_communication(void *pvParameters)
                         SYSTEM_MODULE_MQTT, SYSTEM_EVENT_MQTT_DISCONNECTED,
                         SYSTEM_SEVERITY_WARNING, mqtt_recover_err,
                         "MQTT connect/recovery failed");
+                    fail_cls = CELL_FAIL_DATA;
                     mqtt_session_ready = false;
                     mqtt_profile_ready = false;
                     fast_retry = true;
@@ -510,6 +774,7 @@ static void task_communication(void *pvParameters)
                 // Timeout transitorio: si la sesion sigue activa no forzar recovery duro.
                 if ((pub_err == ESP_ERR_TIMEOUT) && mqtt_client_check_connected()) {
                     LOG_WARN(TAG, "publish timeout, MQTT still connected - skip hard recovery");
+                    fail_cls = CELL_FAIL_DATA;
                     fast_retry = true;
                     goto cycle_delay;
                 }
@@ -521,6 +786,7 @@ static void task_communication(void *pvParameters)
                 } else {
                     mqtt_session_ready = true;
                 }
+                fail_cls = CELL_FAIL_DATA;
                 fast_retry = true;
                 goto cycle_delay;
             }
@@ -552,7 +818,7 @@ static void task_communication(void *pvParameters)
         if (snap.pq_status != 0U) {
             if (data_serializer_build_senml_alerta(&snap, snap.pq_status,
                                                    payload, sizeof(payload)) == ESP_OK) {
-                const esp_err_t al_err = mqtt_client_publish(
+                const esp_err_t al_err = comm_publish(
                     mqtt_topics_alerta(), payload, 1, 0);
                 if (al_err != ESP_OK) {
                     LOG_WARN(TAG, "/alerta publish failed: %s", esp_err_to_name(al_err));
@@ -587,7 +853,7 @@ static void task_communication(void *pvParameters)
                                                        payload,
                                                        sizeof(payload)) == ESP_OK) {
                     LOG_INFO(TAG, "/estado preparado bytes=%u", (unsigned)strlen(payload));
-                    const esp_err_t st_err = mqtt_client_publish(
+                    const esp_err_t st_err = comm_publish(
                         mqtt_topics_estado(), payload,
                         METER_MQTT_STATUS_QOS, METER_MQTT_STATUS_RETAIN);
                     if (st_err != ESP_OK) {
@@ -602,6 +868,7 @@ static void task_communication(void *pvParameters)
 
 cycle_delay:
         if (fast_retry) {
+            comm_cell_ladder(fail_cls, &mqtt_profile_ready, &mqtt_session_ready);
             // Storage owns periodic acquisition and durable queue, even while
             // this task is blocked in modem registration or recovery.
             if (consecutive_failures == 0U) {

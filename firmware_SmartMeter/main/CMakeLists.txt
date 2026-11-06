@@ -37,6 +37,7 @@ set(SRCS
     "../modules/communication/mqtt_topics.c"
     "../modules/communication/data_serializer.c"
     "../modules/communication/node_health.c"
+    "../modules/communication/cell_recovery.c"
     "../modules/ui/display_manager.c"
     "../modules/ui/menu_handler.c"
     "../tasks/task_manager.c"

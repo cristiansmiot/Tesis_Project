@@ -681,8 +681,22 @@ static esp_err_t storage_refresh_head(storage_record_kind_t kind)
         return ESP_OK;
     }
 
-    const esp_err_t err = sd_storage_peek_line(path, line,
-                                               STORAGE_SERVICE_LINE_MAX);
+    esp_err_t err = sd_storage_peek_line(path, line, STORAGE_SERVICE_LINE_MAX);
+    if ((err != ESP_OK) && (err != ESP_ERR_NOT_FOUND) &&
+        (err != ESP_ERR_INVALID_SIZE)) {
+        /* rc4: en E4-01 hubo 5 "SD queue read failed" durante el vaciado de
+         * 485 registros, todos resueltos con un remontaje de 1 s. Un segundo
+         * intento tras una pausa corta evita el remontaje si fue transitorio. */
+        vTaskDelay(pdMS_TO_TICKS(20U));
+        err = sd_storage_peek_line(path, line, STORAGE_SERVICE_LINE_MAX);
+        if ((err == ESP_OK) || (err == ESP_ERR_NOT_FOUND) ||
+            (err == ESP_ERR_INVALID_SIZE)) {
+            storage_lock();
+            ++s_snapshot.queue_read_retries_ok;
+            storage_unlock();
+            LOG_WARN(TAG, "lectura de cola %s recuperada al segundo intento", path);
+        }
+    }
     if ((err != ESP_OK) && (err != ESP_ERR_NOT_FOUND) &&
         (err != ESP_ERR_INVALID_SIZE)) {
         /* Error de lectura: remontar. Si se repite sobre la misma cabeza, la

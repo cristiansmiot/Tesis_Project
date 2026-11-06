@@ -128,6 +128,26 @@ const char *sim7080g_get_imei(void);
  */
 esp_err_t sim7080g_sync_network_time(void);
 
+/* ── rc4: escalera de recuperacion celular ──────────────────────────────
+ * Las acciones bloquean la tarea que llama (hasta ~1 min) y dejan el modem
+ * para reinicializar en la siguiente vuelta del ciclo de comunicaciones. */
+
+/** Ultimo <stat> de CEREG/CGREG (-1 sin dato; 0 no busca; 2 busca; 3 denegado). */
+int sim7080g_get_reg_stat(void);
+
+/** N1: AT+CFUN=4 (solo radio), 3 s, AT+CFUN=1 y espera CPIN READY. */
+esp_err_t sim7080g_radio_reattach(void);
+
+/** N2: AT+CFUN=1,1 (reinicio del modem) y espera a que vuelva a contestar AT. */
+esp_err_t sim7080g_soft_reset(void);
+
+/**
+ * Sonda del plano de datos con el PDP activo: ping (AT+SNPING4) y, si no
+ * responde, resolucion DNS. ESP_OK si alguna responde. detail resume el
+ * resultado para el evento (<= 47 caracteres).
+ */
+esp_err_t sim7080g_data_probe(char *detail, size_t detail_len);
+
 /**
  * @brief Obtiene la ultima fecha/hora sincronizada desde la red.
  * @return Cadena "YYYY-MM-DD HH:MM" o cadena vacia si no disponible.

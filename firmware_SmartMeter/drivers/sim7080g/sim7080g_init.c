@@ -24,6 +24,9 @@ static uint32_t s_detected_baudrate;
 static uint32_t s_last_known_baud;
 static uint8_t s_health_fail_streak;
 static bool s_last_at_response_ok;
+// rc4: ultimo <stat> de CEREG (o CGREG si CEREG no respondio); -1 = sin dato.
+// 0 no registrado ni buscando, 1 local, 2 buscando, 3 denegado, 5 roaming.
+static int s_last_reg_stat = -1;
 // true cuando el modem no contesta AT pero respondio por UART hace menos de
 // METER_SIM7080G_BUSY_GRACE_MS: esta ocupado, no apagado.
 static bool s_modem_busy;
@@ -79,21 +82,20 @@ static const uint32_t k_sim7080g_baud_candidates[] = {
 #endif
 };
 
-static bool sim7080g_response_reg_ready(const char *response, const char *prefix)
+static int sim7080g_response_reg_stat(const char *response, const char *prefix)
 {
     if ((response == NULL) || (prefix == NULL)) {
-        return false;
+        return -1;
     }
     const char *line = strstr(response, prefix);
     if (line == NULL) {
-        return false;
+        return -1;
     }
     const char *comma = strchr(line, ',');
     if (comma == NULL) {
-        return false;
+        return -1;
     }
-    const int stat = atoi(comma + 1);
-    return (stat == 1) || (stat == 5);
+    return atoi(comma + 1);
 }
 
 static const char *sim7080g_select_apn(void)
@@ -179,6 +181,7 @@ static esp_err_t sim7080g_query_network_registration(char *response,
 
     esp_err_t last_err = ESP_FAIL;
     bool got_reply = false;
+    int round_stat = -1;
 
     for (size_t i = 0U; i < (sizeof(k_queries) / sizeof(k_queries[0])); ++i) {
         if ((response != NULL) && (response_len > 0U)) {
@@ -197,7 +200,12 @@ static esp_err_t sim7080g_query_network_registration(char *response,
         }
 
         got_reply = true;
-        if (sim7080g_response_reg_ready(response, k_queries[i].prefix)) {
+        const int stat = sim7080g_response_reg_stat(response, k_queries[i].prefix);
+        if (round_stat < 0) {
+            round_stat = stat;  // CEREG (LTE) tiene prioridad sobre CGREG
+        }
+        if ((stat == 1) || (stat == 5)) {
+            s_last_reg_stat = stat;
             if (source_out != NULL) {
                 *source_out = k_queries[i].label;
             }
@@ -206,6 +214,7 @@ static esp_err_t sim7080g_query_network_registration(char *response,
         last_err = ESP_ERR_INVALID_STATE;
     }
 
+    s_last_reg_stat = round_stat;
     return got_reply ? ESP_ERR_INVALID_STATE : last_err;
 }
 
@@ -522,6 +531,57 @@ static bool sim7080g_mode_already_set(const char *query,
            (value == expected);
 }
 
+/*
+ * rc4: politica de operador. COPS se guarda en el modem (AUTO_SAVE), asi que
+ * se verifica en cada inicializacion completa y solo se escribe si difiere:
+ * cada escritura dispara una busqueda y un registro nuevos en la red.
+ */
+static void sim7080g_apply_operator_policy(void)
+{
+    const char *pref = METER_SIM7080G_PREFERRED_PLMN;
+    char response[128];
+
+    // Formato numerico para poder comparar el PLMN leido (no cambia el registro).
+    (void)sim7080g_hal_send_cmd("AT+COPS=3,2", NULL, NULL, 0U,
+                                METER_SIM7080G_AT_TIMEOUT_MS, 1U);
+    response[0] = '\0';
+    if (sim7080g_hal_send_cmd("AT+COPS?", NULL, response, sizeof(response),
+                              METER_SIM7080G_AT_TIMEOUT_MS, 1U) != ESP_OK) {
+        LOG_WARN(TAG, "COPS? sin respuesta; politica de operador omitida");
+        return;
+    }
+    int mode = -1;
+    const char *p = strstr(response, "+COPS:");
+    if (p != NULL) {
+        (void)sscanf(p + strlen("+COPS:"), " %d", &mode);
+    }
+
+    char cmd[48];
+    if (pref[0] == '\0') {
+        if (mode == 0) {
+            return;
+        }
+        (void)snprintf(cmd, sizeof(cmd), "AT+COPS=0");
+    } else {
+        // Tras COPS=4 el modem informa 1 (manual) o 4; si cayo a automatico
+        // por falla del manual informa 0 y se vuelve a pedir el preferido.
+        if (((mode == 1) || (mode == 4)) && (strstr(response, pref) != NULL)) {
+            LOG_INFO(TAG, "operador preferido vigente: %s", response);
+            return;
+        }
+        (void)snprintf(cmd, sizeof(cmd), "AT+COPS=4,2,\"%s\"", pref);
+    }
+
+    LOG_WARN(TAG, "politica de operador: %s (antes: %s)", cmd, response);
+    response[0] = '\0';
+    const esp_err_t err = sim7080g_hal_send_cmd(cmd, NULL, response, sizeof(response),
+                                                METER_SIM7080G_COPS_TIMEOUT_MS, 1U);
+    if (err != ESP_OK) {
+        // Con modo 4 el propio modem pasa a automatico si el manual falla.
+        LOG_WARN(TAG, "%s fallo: %s resp=%s", cmd, esp_err_to_name(err), response);
+    }
+}
+
 static bool sim7080g_within_busy_grace(void)
 {
     const int64_t last_rx_us = sim7080g_hal_last_rx_us();
@@ -829,6 +889,8 @@ esp_err_t sim7080g_init(void)
         LOG_WARN(TAG, "CEDRXS disable failed (continuing)");
     }
 
+    sim7080g_apply_operator_policy();
+
     s_state = SIM7080G_STATE_MODEM_READY;
     LOG_INFO(TAG,
              "SIM7080G modem ready (baud=%lu)",
@@ -1082,6 +1144,156 @@ void sim7080g_mark_modem_unready(void)
 const char *sim7080g_get_apn(void)
 {
     return sim7080g_select_apn();
+}
+
+int sim7080g_get_reg_stat(void)
+{
+    return s_last_reg_stat;
+}
+
+/* ── rc4: acciones de la escalera de recuperacion ─────────────────────── */
+
+esp_err_t sim7080g_radio_reattach(void)
+{
+    char response[96];
+    // CFUN=4 apaga solo la radio; CFUN=0 apagaba tambien la SIM y en el banco
+    // dejo "+CME ERROR: SIM failure" al volver (banco_run02).
+    LOG_WARN(TAG, "N1: radio off/on (CFUN=4 -> CFUN=1)");
+    response[0] = '\0';
+    const esp_err_t off_err = sim7080g_hal_send_cmd("AT+CFUN=4", NULL, response,
+                                                    sizeof(response), 10000U, 1U);
+    if (off_err != ESP_OK) {
+        LOG_WARN(TAG, "CFUN=4 fallo: %s resp=%s", esp_err_to_name(off_err), response);
+    }
+    vTaskDelay(pdMS_TO_TICKS(3000U));
+    response[0] = '\0';
+    const esp_err_t on_err = sim7080g_hal_send_cmd("AT+CFUN=1", NULL, response,
+                                                   sizeof(response), 10000U, 2U);
+    s_state = (uint8_t)(s_state &
+                        ((uint8_t)~(SIM7080G_STATE_NETWORK_READY | SIM7080G_STATE_PDP_READY)));
+    s_last_reg_stat = -1;
+    if (on_err != ESP_OK) {
+        LOG_WARN(TAG, "CFUN=1 fallo: %s resp=%s", esp_err_to_name(on_err), response);
+        // El modem queda en duda: la siguiente vuelta hace la inicializacion
+        // completa (sondeo, CPIN, modos y operador).
+        sim7080g_mark_modem_unready();
+        return on_err;
+    }
+    // Confirmar CPIN READY antes de consultar registro.
+    const esp_err_t sim_err = sim7080g_wait_sim_ready(15000U);
+    if (sim_err != ESP_OK) {
+        sim7080g_mark_modem_unready();
+    }
+    return sim_err;
+}
+
+static bool sim7080g_wait_at_back(uint32_t timeout_ms)
+{
+    const TickType_t start = xTaskGetTickCount();
+    while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(timeout_ms)) {
+        if (sim7080g_hal_send_cmd(AT_BASIC, NULL, NULL, 0U, 1000U, 1U) == ESP_OK) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(2000U));
+    }
+    return false;
+}
+
+esp_err_t sim7080g_soft_reset(void)
+{
+    char response[96];
+    LOG_WARN(TAG, "N2: reinicio software del modem (CFUN=1,1)");
+    response[0] = '\0';
+    const esp_err_t err = sim7080g_hal_send_cmd("AT+CFUN=1,1", NULL, response,
+                                                sizeof(response), 10000U, 1U);
+    if (err != ESP_OK) {
+        // Con baud fijo el OK puede llegar despues del reinicio: no es fallo.
+        LOG_WARN(TAG, "CFUN=1,1 sin OK inmediato: %s resp=%s",
+                 esp_err_to_name(err), response);
+    }
+    vTaskDelay(pdMS_TO_TICKS(8000U));
+    const bool back = sim7080g_wait_at_back(45000U);
+    // Estado del modem desconocido tras el reinicio: inicializacion completa.
+    sim7080g_mark_modem_unready();
+    s_last_reg_stat = -1;
+    if (!back) {
+        LOG_WARN(TAG, "N2: el modem no contesto AT 53 s despues de CFUN=1,1");
+        return ESP_ERR_TIMEOUT;
+    }
+    LOG_INFO(TAG, "N2: modem contesta AT tras el reinicio");
+    return ESP_OK;
+}
+
+static bool sim7080g_ping_ok(const char *response, unsigned long *rtt_ms)
+{
+    const char *p = response;
+    while ((p != NULL) && ((p = strstr(p, "+SNPING4:")) != NULL)) {
+        p += strlen("+SNPING4:");
+        int reply_id = 0;
+        char ip[32];
+        unsigned long rtt = 0UL;
+        // Banco rc4 run03: sin respuesta el modem informa el tiempo como
+        // 60000 ms ("+SNPING4: 1,8.8.8.8,60000"); solo cuenta un eco dentro
+        // del timeout pedido (3000 ms).
+        if ((sscanf(p, " %d,%31[^,],%lu", &reply_id, ip, &rtt) == 3) && (reply_id > 0) &&
+            (rtt < 3000UL)) {
+            if (rtt_ms != NULL) {
+                *rtt_ms = rtt;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool sim7080g_dns_ok(void)
+{
+    char cmd[96];
+    char response[96];
+    char urc[160];
+    (void)snprintf(cmd, sizeof(cmd), "AT+CDNSGIP=\"%s\",1,3000",
+                   METER_CELL_RECOVERY_DNS_HOST);
+    response[0] = '\0';
+    if (sim7080g_hal_send_cmd(cmd, NULL, response, sizeof(response), 5000U, 1U) != ESP_OK) {
+        return false;
+    }
+    urc[0] = '\0';
+    if (sim7080g_hal_read_urc("+CDNSGIP:", urc, sizeof(urc), 12000U) != ESP_OK) {
+        return false;
+    }
+    const char *payload = strchr(urc, ':');
+    int result = 0;
+    return (payload != NULL) && (sscanf(payload + 1, " %d", &result) == 1) && (result == 1);
+}
+
+esp_err_t sim7080g_data_probe(char *detail, size_t detail_len)
+{
+    char cmd[96];
+    char response[256];
+    unsigned long rtt = 0UL;
+
+    (void)snprintf(cmd, sizeof(cmd), "AT+SNPDPID=%u", (unsigned)METER_SIM7080G_PDP_CID);
+    (void)sim7080g_hal_send_cmd(cmd, NULL, NULL, 0U, METER_SIM7080G_AT_TIMEOUT_MS, 1U);
+    (void)snprintf(cmd, sizeof(cmd), "AT+SNPING4=\"%s\",3,16,3000",
+                   METER_CELL_RECOVERY_PING_HOST);
+    response[0] = '\0';
+    const esp_err_t ping_err = sim7080g_hal_send_cmd(cmd, NULL, response, sizeof(response),
+                                                     14000U, 1U);
+    const bool ping = (ping_err == ESP_OK) && sim7080g_ping_ok(response, &rtt);
+    LOG_INFO(TAG, "sonda ping %s: %s resp=%s", METER_CELL_RECOVERY_PING_HOST,
+             ping ? "OK" : "sin respuesta", response);
+    if (ping) {
+        if ((detail != NULL) && (detail_len > 0U)) {
+            (void)snprintf(detail, detail_len, "ping OK %lums", rtt);
+        }
+        return ESP_OK;
+    }
+    const bool dns = sim7080g_dns_ok();
+    LOG_INFO(TAG, "sonda DNS %s: %s", METER_CELL_RECOVERY_DNS_HOST, dns ? "OK" : "fallo");
+    if ((detail != NULL) && (detail_len > 0U)) {
+        (void)snprintf(detail, detail_len, dns ? "ping no, DNS OK" : "ping y DNS fallan");
+    }
+    return dns ? ESP_OK : ESP_FAIL;
 }
 
 static char s_network_time[20];

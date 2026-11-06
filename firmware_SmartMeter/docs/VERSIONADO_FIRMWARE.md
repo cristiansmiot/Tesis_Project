@@ -317,3 +317,62 @@ Estado:
 - Pendiente: corrida de verificación `INT_AC_carga_rc3` (puerta de entrada a P05).
 
 Evidencia: `evidence/versions/2026-11-04_q1-rc3-build/`.
+
+## Escalera de recuperación celular — `1.1.0-obj4-q1-rc4`
+
+Origen: E4-01 (2026-11-05). El módem contestó AT durante un corte de 4 h 40 min, con 93 registros fallidos. Solo se recuperó al reiniciar el módulo con el botón, y tardó menos de 1 min. q1-rc3 no escalaba: el PWRKEY solo actúa si el módem no contesta AT, y estaba inhibido en ese perfil.
+
+Cambios respecto de q1-rc3:
+
+- **Escalera** (`modules/communication/cell_recovery.c`, política pura con autoprueba de 33 pasos). El reloj cuenta desde la última publicación MQTT confirmada, no desde la última sesión: en E4-01 hubo sesiones que fallaban al primer SMPUB.
+  - **N1:** `AT+CFUN=4/1` (solo la radio) a los 10 min; a los 3 min si CEREG informa 0 o 3. Como máximo uno cada 20 min. Con `CFUN=0` el banco dio `SIM failure` al volver.
+  - **N2:** `AT+CFUN=1,1` a los 30 min. Como máximo uno por hora.
+  - **N3:** `AT+CPOWD=1` y PWRKEY a los 90 min. Uno cada 2 h, con intervalo que se duplica hasta 8 h, y máximo 6 por día.
+- **Sonda de datos** (`AT+SNPING4` a 8.8.8.8 y, si no responde, `AT+CDNSGIP`). Se usa cuando hay registro y PDP. Si responde, la falla es del broker: no se toca el módem salvo un N2 después de 45 min. En la primera conexión de banco hubo `SMCONN operation not allowed` con ping correcto, es decir, una pila MQTT del módem trabada.
+- **Eventos:** cada escalón genera `SIM_MODEM/MODEM_RECOVERY`. N1 es INFO y solo queda en la SD. N2 y N3 son WARNING y llegan a /alerta; los cierra el `MODULE_READY` siguiente.
+- **PWRKEY automático activo de nuevo.** Enciende el módem tras un arranque en frío (`ESP_RST_POWERON`). Tras un reinicio solo del ESP32 exige 5 min sin AT antes de pulsar.
+- **Operador en modo automático** (`AT+COPS=0`). La preferencia `COPS=4,2,"732123"` se probó y **se descartó**: el módem la guarda como modo manual y, tras un CFUN o un reinicio, queda sin buscar red (banco run02). Como COPS se guarda en el módem, se verifica en cada inicialización completa; eso además repara un módem que haya quedado en manual. El detalle de `CELL_NO_SERVICE` incluye CEREG.
+- **Sonda:** solo cuenta un eco de ping de menos de 3000 ms. Sin respuesta, el módem informa 60000 ms, y en run03 eso se tomaba como éxito.
+- **SD:** segundo intento de lectura de la cabeza de la cola antes de remontar. En E4-01 hubo 5 remontajes durante el vaciado.
+- **Ahorro de datos, solo perfil de producción:**
+  - histórico SD y `/datos` cada 5 min; cada fila genera su registro de telemetría, así que la secuencia sigue consecutiva;
+  - `/estado` cada 30 min;
+  - resultado estimado: ~0,35 MB/día frente a ~1,5 MB/día con 60 s.
+
+  El keepalive MQTT sigue en 120 s porque el broker impone `max_keepalive 120` y rechaza un CONNECT 3.1.1 que pida más. El backend marca el equipo como offline a los 5 min sin datos (`OFFLINE_UMBRAL_MIN`): conviene subir esa variable a 15 en Railway.
+
+| Perfil | Versión | SHA-256 del binario | Bytes |
+|---|---|---|---|
+| `integration_qos1_rc4` | `1.1.0-obj4-q1-rc4` | ver `SHA256SUMS.txt` (recompilado el 2026-11-06 sin preferencia de operador, con N1 `CFUN=4` y sonda corregida) | — |
+| `sin_datos_modem_apagado` | `1.1.0-obj4-q1-rc4-sindatos` | `6AD98A22E894519F5467CC6D794D799718B41E91D6C4279C23B285F8BA323477` | — |
+| `integration_qos1_rc4_banco` | `1.1.0-obj4-q1-rc4-banco` | `DDFE224D75E1A1B6DC91EF3FEC1DF4D19BAE541D42C6662DCE653C264F83F45D` | 508 928 |
+
+El binario `_banco` se compiló antes de dos cambios de configuración que no lo afectan: el valor por defecto de 45 min, que el perfil sobrescribe con 20 min, y el `#ifndef` de `/estado`. Ese binario se grabó el 2026-11-06 a las 03:18 UTC.
+
+El perfil `_banco` tiene los tiempos acortados: N1 1 min, N2 3 min, N3 6 min. Además ejecuta la autoprueba de la política y un guion automático que empieza 3 min después de la primera publicación:
+
+| Fase | Duración | Condición simulada | Resultado esperado |
+|---|---|---|---|
+| A | 12 min | Falla MQTT con registro y PDP reales | La sonda responde; **sin reinicios** del módem |
+| B | 4 min | Normal | La cola se vacía |
+| C | 16 min | Registro ausente | Se ejecutan N1, N2 y N3 reales |
+| D | — | Normal | Recuperación y vaciado |
+
+Perfil `sin_datos_modem_apagado`: sin celular ni MQTT, con el módem **apagado** al arrancar (`AT+CPOWD=1`, o PWRKEY si no obedece). ADE, RTC, OLED y SD siguen activos. Sirve para las noches entre ensayos sin gastar datos.
+
+Resultados de banco en `evidence/versions/2026-11-05_q1-rc4-build/RESULTADOS_BANCO.md`:
+
+- validados el encendido en caliente, la sonda, la fase A sin reinicios y la mecánica de N1, N2 y N3 con el módem real;
+- descartada la preferencia de operador;
+- corregidos N1 y el análisis del ping;
+- pendiente repetir una vez las fases C y D.
+
+Estado anterior: compilados ambos; pendiente la prueba de banco por USB con la AC desconectada. Antes de E4-02 hay que verificar:
+
+- encendido del módem en frío;
+- registro con 732-123;
+- que el ping responde en este APN;
+- autoprueba OK;
+- fases A a D.
+
+Evidencia: `evidence/versions/2026-11-05_q1-rc4-build/`.

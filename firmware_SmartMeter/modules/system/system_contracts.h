@@ -107,6 +107,9 @@ typedef enum {
     SYSTEM_EVENT_SIM_OFF,
     SYSTEM_EVENT_AC_LOST,
     SYSTEM_EVENT_AC_RESTORED,
+    /* rc4: escalon de la escalera de recuperacion celular (N1/N2/N3) o su
+     * omision por sonda de datos correcta. */
+    SYSTEM_EVENT_MODEM_RECOVERY,
     SYSTEM_EVENT_CODE_COUNT,
 } system_event_code_t;
 

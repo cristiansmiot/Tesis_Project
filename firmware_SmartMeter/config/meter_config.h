@@ -186,7 +186,11 @@
 #define METER_COMM_HEARTBEAT_INTERVAL_MS       15000U
 // Periodo de publicacion del topic /estado (salud del nodo).
 // Independiente del ciclo de /datos. Usar multiplo del publish period.
+// rc4: el perfil de produccion lo sube a 30 min para ahorrar datos (~1,1 KB
+// por /estado); sobrescribible desde platformio.ini.
+#ifndef METER_COMM_ESTADO_PERIOD_MS
 #define METER_COMM_ESTADO_PERIOD_MS            300000U   // 5 minutos
+#endif
 // Modo de depuracion Sprint 3:
 // 1 = prioriza SIM7080G (omite ADE/metrologia y arranca solo task_communication)
 // 0 = arranque normal completo (ADE + metrologia + comunicacion)
@@ -229,6 +233,94 @@
 // Silencio UART minimo antes de un pulso PWRKEY: un pulso sobre un modem
 // ocupado (encendido) lo apaga.
 #define METER_SIM7080G_PWRKEY_MIN_SILENCE_MS   600000U
+// rc4: tras un reinicio solo del ESP32 (software, watchdog, panico, EN) el
+// modem pudo quedar encendido y ocupado. Si aun no ha contestado AT en este
+// arranque, se exige este silencio antes de pulsar. Tras un encendido en
+// frio (ESP_RST_POWERON) el HAT tambien perdio energia: queda apagado y se
+// enciende tras METER_SIM7080G_PWRKEY_NO_AT_PROBES sondeos sin respuesta.
+#define METER_SIM7080G_PWRKEY_WARM_BOOT_SILENCE_MS 300000U
+// Perfil sin comunicaciones (METER_COMM_ENABLE=0): 1 = apagar el modem al
+// arrancar (AT+CPOWD=1, PWRKEY si no obedece). Un modem encendido sigue
+// registrado y su cliente MQTT envia keepalives: consume datos del plan.
+#ifndef METER_SIM7080G_POWER_OFF_WHEN_DISABLED
+#define METER_SIM7080G_POWER_OFF_WHEN_DISABLED 0
+#endif
+
+// ── rc4: preferencia de operador ────────────────────────────────────────
+// La SIM (IMSI 214-07) solo puede registrarse en Movistar Colombia (732-123).
+// Colombia Movil (732-103/111) la rechaza con 5004 INVALID AVP VALUE (Kite,
+// E4-01) y el modem queda sin servicio mientras reintenta. Valor no vacio:
+// AT+COPS=4,2,"<plmn>" (manual con respaldo automatico del propio modem).
+// Vacio: AT+COPS=0. COPS se guarda en el modem (AUTO_SAVE), por eso el
+// firmware lo verifica en cada inicializacion completa.
+// Banco rc4 (2026-11-06, banco_run02): con COPS=4,2,"732123" el modem guarda
+// modo manual (+COPS: 1) y, tras CFUN o reinicio, queda sin buscar red
+// (CEREG 0, CPSI NO SERVICE) incluso despues de un N3; en automatico se
+// registra solo en 732-123. Por eso rc4 usa "" (COPS=0), que ademas repara
+// un modem que quedo guardado en manual.
+#ifndef METER_SIM7080G_PREFERRED_PLMN
+#define METER_SIM7080G_PREFERRED_PLMN          ""
+#endif
+#define METER_SIM7080G_COPS_TIMEOUT_MS         120000U
+
+// ── rc4: escalera de recuperacion celular ───────────────────────────────
+// Se mide el tiempo desde la ultima publicacion MQTT confirmada (no desde la
+// ultima "sesion": en E4-01 hubo sesiones que fallaban al primer SMPUB).
+// Solo actua si el modem contesta AT; el modem mudo sigue la politica
+// PWRKEY por NO_AT. Escalones (cada uno reinicia los relojes de los menores):
+//   N1 radio off/on (AT+CFUN=4/1)       desde N1_AFTER, cada N1_MIN_GAP
+//   N2 reinicio software (AT+CFUN=1,1)   desde N2_AFTER, cada N2_MIN_GAP
+//   N3 apagado + PWRKEY (reinicio fisico) desde N3_AFTER, cada N3_GAP (se
+//      duplica hasta N3_MAX_GAP) y como maximo N3_MAX_PER_DAY por 24 h
+// Con registro y PDP activos se hace antes una sonda de datos (ping y DNS):
+// si responde, la falla es del broker/servidor y no se toca el modem salvo
+// un N2 tras PROBE_OK_N2_AFTER (pila MQTT del modem trabada).
+#ifndef METER_CELL_RECOVERY_ENABLE
+#define METER_CELL_RECOVERY_ENABLE             1
+#endif
+#ifndef METER_CELL_RECOVERY_N1_AFTER_MS
+#define METER_CELL_RECOVERY_N1_AFTER_MS        600000U     // 10 min
+#endif
+// Sin registro y con CEREG 0 (no busca) o 3 (denegado): N1 adelantado.
+#ifndef METER_CELL_RECOVERY_N1_EARLY_MS
+#define METER_CELL_RECOVERY_N1_EARLY_MS        180000U     // 3 min
+#endif
+#ifndef METER_CELL_RECOVERY_N1_MIN_GAP_MS
+#define METER_CELL_RECOVERY_N1_MIN_GAP_MS      1200000U    // 20 min
+#endif
+#ifndef METER_CELL_RECOVERY_N2_AFTER_MS
+#define METER_CELL_RECOVERY_N2_AFTER_MS        1800000U    // 30 min
+#endif
+#ifndef METER_CELL_RECOVERY_N2_MIN_GAP_MS
+#define METER_CELL_RECOVERY_N2_MIN_GAP_MS      3600000U    // 60 min
+#endif
+#ifndef METER_CELL_RECOVERY_N3_AFTER_MS
+#define METER_CELL_RECOVERY_N3_AFTER_MS        5400000U    // 90 min
+#endif
+#ifndef METER_CELL_RECOVERY_N3_GAP_MS
+#define METER_CELL_RECOVERY_N3_GAP_MS          7200000U    // 2 h
+#endif
+#ifndef METER_CELL_RECOVERY_N3_MAX_GAP_MS
+#define METER_CELL_RECOVERY_N3_MAX_GAP_MS      28800000U   // 8 h
+#endif
+#define METER_CELL_RECOVERY_N3_MAX_PER_DAY     6U
+#ifndef METER_CELL_RECOVERY_PROBE_MIN_GAP_MS
+#define METER_CELL_RECOVERY_PROBE_MIN_GAP_MS   300000U     // 5 min
+#endif
+// Con la sonda correcta y MQTT fallando, N2 llega a los 45 min: mas que un
+// corte de broker de E5 (10 y 30 min, sin reinicios) y menos que dejar 2 h
+// una pila MQTT del modem trabada ("operation not allowed" con ping OK, visto
+// en la primera conexion del banco rc4, 2026-11-05).
+#ifndef METER_CELL_RECOVERY_PROBE_OK_N2_AFTER_MS
+#define METER_CELL_RECOVERY_PROBE_OK_N2_AFTER_MS 2700000U  // 45 min
+#endif
+#define METER_CELL_RECOVERY_PING_HOST          "8.8.8.8"
+#define METER_CELL_RECOVERY_DNS_HOST           "google.com"
+// 1 solo en el entorno de banco: autoprueba de la politica al arrancar y
+// comandos remotos de inyeccion de fallas (cell_fault:<s>, mqtt_fault:<s>).
+#ifndef METER_CELL_RECOVERY_TEST_HOOKS
+#define METER_CELL_RECOVERY_TEST_HOOKS         0
+#endif
 
 #define METER_MQTT_HOST                        "shinkansen.proxy.rlwy.net"
 #define METER_MQTT_PORT                        58954U

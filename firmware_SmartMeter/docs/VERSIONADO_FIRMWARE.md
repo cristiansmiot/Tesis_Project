@@ -365,7 +365,9 @@ Resultados de banco en `evidence/versions/2026-11-05_q1-rc4-build/RESULTADOS_BAN
 - validados el encendido en caliente, la sonda, la fase A sin reinicios y la mecánica de N1, N2 y N3 con el módem real;
 - descartada la preferencia de operador;
 - corregidos N1 y el análisis del ping;
-- pendiente repetir una vez las fases C y D.
+- **run04 (2026-11-06, `banco4` BA62EAEB…): fases C y D OK.** Escalera completa en 16 min. Al terminar la falla simulada, el módem se registró en 60 s y conectó MQTT en 66 s. Después, 23 min de publicación sin reintentos AT ni fallas. La autoprueba aparece "OK (33 pasos)" en los `events_v1.jsonl` de la SD.
+
+El encendido en frío se verifica al inicio de E4-02, con el cargador de pared y sin pulsar el botón del módulo.
 
 Estado anterior: compilados ambos; pendiente la prueba de banco por USB con la AC desconectada. Antes de E4-02 hay que verificar:
 

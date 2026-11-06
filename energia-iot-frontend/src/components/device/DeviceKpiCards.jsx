@@ -1,6 +1,7 @@
 import { Zap, Activity, Gauge, TrendingUp, Clock, Battery } from 'lucide-react';
 import KpiCard from '../common/KpiCard';
 import { formatBogotaTime } from '../../utils/dateTime';
+import { whAKwh } from '../../utils/consumo';
 
 /**
  * Fila de KPIs para el detalle de un medidor.
@@ -11,7 +12,8 @@ const DeviceKpiCards = ({ medicion }) => {
   const corriente = medicion?.corriente_rms?.toFixed(2) || '---';
   const potencia = medicion?.potencia_activa?.toFixed(1) || '---';
   const fp = medicion?.factor_potencia?.toFixed(2) || '---';
-  const energia = medicion?.energia_activa?.toFixed(1) || '---';
+  // Contador del medidor en Wh, mostrado en kWh (unidad de facturacion).
+  const energia = whAKwh(medicion?.energia_activa) ?? '---';
   const ultimaLectura = medicion?.timestamp
     ? formatBogotaTime(medicion.timestamp, '---')
     : '---';

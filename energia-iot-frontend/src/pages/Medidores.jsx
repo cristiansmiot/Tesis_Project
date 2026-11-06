@@ -7,6 +7,7 @@ import { dispositivosAPI, medicionesAPI } from '../services/api';
 import { evaluarConectividad } from '../utils/voltage';
 import { useAuth } from '../contexts/AuthContext';
 import { formatBogotaTime } from '../utils/dateTime';
+import { whAKwh } from '../utils/consumo';
 
 const Medidores = () => {
   const { refreshKey } = useOutletContext();
@@ -240,7 +241,7 @@ const Medidores = () => {
                       </td>
                       <td className="py-3 px-4 text-gray-600">{ultimaLectura}</td>
                       <td className="py-3 px-4 font-medium text-gray-800">
-                        {med?.energia_activa != null ? `${med.energia_activa.toFixed(1)} kWh` : '---'}
+                        {med?.energia_activa != null ? `${whAKwh(med.energia_activa)} kWh` : '---'}
                       </td>
                       <td className="py-3 px-4">
                         <StatusBadge label={rssiStatus.nivel} color={rssiStatus.color} showDot={false} />

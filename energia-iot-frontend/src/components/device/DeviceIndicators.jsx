@@ -1,5 +1,6 @@
 import StatusBadge from '../common/StatusBadge';
 import { evaluarVoltaje, evaluarFactorPotencia, evaluarFrecuencia } from '../../utils/voltage';
+import { whAKwh } from '../../utils/consumo';
 
 /**
  * Grid de indicadores actuales con badges de estado.
@@ -12,8 +13,9 @@ const DeviceIndicators = ({ medicion }) => {
 
   const indicadores = [
     {
-      label: 'Energía consumida',
-      valor: medicion?.energia_activa?.toFixed(1) || '---',
+      // energia_activa llega en Wh (contador del medidor); se muestra en kWh.
+      label: 'Energía acumulada',
+      valor: whAKwh(medicion?.energia_activa) ?? '---',
       unidad: 'kWh',
       status: { color: 'green', label: 'Normal' },
     },

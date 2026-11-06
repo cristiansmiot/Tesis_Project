@@ -33,6 +33,10 @@ def get_database_url() -> str:
     # Normalizar: Railway a veces emite 'postgres://' que SQLAlchemy 2.x no acepta
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
+    # Driver explicito: desde SQLAlchemy 2.1 'postgresql://' usa psycopg (v3),
+    # que no esta instalado; requirements.txt trae psycopg2-binary.
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
 
     # Debug: mostrar el URL (con contraseña enmascarada) para diagnóstico
     try:

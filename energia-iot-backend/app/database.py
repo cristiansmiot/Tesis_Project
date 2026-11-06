@@ -45,9 +45,9 @@ def get_database_url() -> str:
         safe_url = f"{parsed.scheme}://{parsed.username}:***@{parsed.hostname}:{parsed.port}{parsed.path}"
         logger.info(f"DATABASE_URL procesada: {safe_url}")
         logger.info(f"DATABASE_URL scheme: '{parsed.scheme}', host: '{parsed.hostname}'")
-    except Exception as e:
-        logger.warning(f"No se pudo parsear URL para debug: {e}")
-        logger.info(f"DATABASE_URL raw repr: {repr(url[:50])}")
+    except Exception:
+        # Nunca registrar fragmentos de la URL: pueden contener credenciales.
+        logger.warning("No se pudo analizar DATABASE_URL para el diagnostico")
 
     # Auto-detección: si la URL contiene 'postgres', SIEMPRE usar PostgreSQL
     # (ignora USE_SQLITE para evitar configuración incorrecta en producción)
@@ -65,7 +65,7 @@ def get_database_url() -> str:
 
 
 def _create_engine_safe():
-    """Crea el engine con manejo de errores. Retorna SQLite como fallback."""
+    """Crea el engine configurado sin sustituir la base de produccion."""
     database_url = get_database_url()
 
     try:
@@ -85,12 +85,8 @@ def _create_engine_safe():
         logger.info(f"Engine SQLAlchemy creado exitosamente")
         return engine
     except Exception as e:
-        logger.error(f"Error creando engine PostgreSQL: {e}")
-        logger.error(f"Fallback a SQLite para permitir que la app arranque")
-        return create_engine(
-            "sqlite:///./energia_iot_fallback.db",
-            connect_args={"check_same_thread": False},
-        )
+        logger.error("No se pudo crear el engine configurado: %s", type(e).__name__)
+        raise
 
 
 def get_engine():

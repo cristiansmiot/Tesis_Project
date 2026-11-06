@@ -1,11 +1,15 @@
 """Admin - Diagnóstico y seed de base de datos"""
-from fastapi import APIRouter, Depends
+from collections import Counter
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
 from datetime import datetime, timezone
 
 from fastapi import Query
 from app.database import get_db, get_engine
+from app.services.audit import registrar_accion
 from app.models.dispositivo import Dispositivo
 from app.models.medicion import Medicion
 from app.models.nodo_salud import NodoSalud
@@ -291,6 +295,60 @@ def limpiar_dispositivos(db: Session = Depends(get_db)):
         "eliminados": eliminados,
         "actualizados": actualizados,
     }
+
+
+@router.post("/cerrar-alarmas-antiguas")
+def cerrar_alarmas_antiguas(
+    request: Request,
+    hasta: datetime = Query(..., description="Cierra las alarmas activas con timestamp anterior a esta fecha (UTC)"),
+    device_id: Optional[str] = Query(None, description="Limitar a un medidor"),
+    confirmar: bool = Query(False, description="Sin confirmar solo cuenta (simulación)"),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """
+    Cierre administrativo de alarmas activas antiguas, sin borrarlas.
+
+    Para condiciones que quedaron abiertas en datos históricos (p. ej. alertas
+    de firmware sin evento de recuperación). Quedan con activo=False, fin_at =
+    hora del cierre (no la del fin real, que se desconoce) y reconocidas por el
+    usuario. La acción se registra en la auditoría con los ids cerrados.
+    """
+    if hasta.tzinfo is None:
+        hasta = hasta.replace(tzinfo=timezone.utc)
+    q = db.query(Evento).filter(Evento.activo == True, Evento.timestamp < hasta)  # noqa: E712
+    if device_id:
+        q = q.filter(Evento.device_id == device_id.strip().upper())
+    eventos = q.order_by(Evento.timestamp.asc(), Evento.id.asc()).all()
+
+    resumen = {
+        "hasta": hasta.isoformat(),
+        "device_id": device_id,
+        "total": len(eventos),
+        "por_tipo": dict(Counter(f"{e.device_id}:{e.tipo}" for e in eventos)),
+        "primera": eventos[0].timestamp.isoformat() if eventos else None,
+        "ultima": eventos[-1].timestamp.isoformat() if eventos else None,
+    }
+    if not confirmar:
+        return {"simulacion": True, **resumen}
+
+    ahora = datetime.now(timezone.utc)
+    for e in eventos:
+        e.activo = False
+        e.fin_at = ahora
+        if e.reconocido_at is None:
+            e.reconocido_por = usuario.email
+            e.reconocido_at = ahora
+    db.commit()
+
+    registrar_accion(
+        db, accion="alarmas_cerradas_admin", usuario_email=usuario.email,
+        recurso="evento", recurso_id=None,
+        detalles={**resumen, "ids": [e.id for e in eventos],
+                  "nota": "cierre administrativo; fin_at es la hora del cierre"},
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"simulacion": False, "cerradas": len(eventos), **resumen}
 
 
 @router.post("/reset-datos")
